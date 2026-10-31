@@ -1,0 +1,163 @@
+# Next Level backend · IGCSE 0478 and A Level 9618
+
+Express + PostgreSQL API for the Dombit International School Computer Science practice site (Cambridge IGCSE 0478 and AS & A Level 9618). The React frontend and the static pages live in the [Next-Level](https://github.com/Mamadaliyevamubina/Next-Level) repository.
+
+Students sign up with a login name, choose their subject, teacher and class, and wait until their teacher approves them. Every account, answer, mark and bookmark is stored in a PostgreSQL database that you can open in pgAdmin.
+
+```
+src/            Express API (routes in src/routes/)
+db/schema.sql   Tables and views; safe to run more than once
+scripts/        setup-db.js, create-user.js, export-alevel.js
+seed/           Question banks loaded by db:setup
+```
+
+## Full app
+
+```
+Next-Level/client/   React app (Vite)              → http://localhost:5173
+this repo            Express API + PostgreSQL      → http://localhost:4000
+```
+
+**Accounts:** students sign up themselves (pending until approved), teachers and admins are created by you. Each student has an Account page with profile, class details, appearance (light/dark, accent colour, text size, readable font, compact layout, reduced motion), study preferences (daily goal, main paper, streak) and security (change password, delete account).
+
+**Teachers** see only the students who chose them: approve or block sign-ups, class averages, the topics the class finds hardest, and for each student their score by paper and chapter, weakest topics, 4-week activity and recent answers. An admin sees every student.
+
+**Practice features:** all 2,798 questions by paper and chapter, search and filters (exam sitting, not tried, lost marks, full marks, saved), self-marking against the mark scheme points, history of every try, "practise next" (picks questions you have not tried or lost marks on), saved questions, and a dashboard with your score, weakest topics and daily streak.
+
+## Question data
+
+| Seed file | Paper | Question parts |
+|---|---|---|
+| `seed/alevel-paper1.json` | 9618 Paper 1 – Theory Fundamentals | 409 |
+| `seed/alevel-paper2.json` | 9618 Paper 2 – Fundamental Problem-solving and Programming Skills | 463 |
+| `seed/alevel-paper3.json` | 9618 Paper 3 – Advanced Theory | 373 |
+| `seed/alevel-paper4.json` | 9618 Paper 4 – Practical (Python) | 242 |
+| `seed/igcse-paper1.json` | IGCSE Paper 1 – Computer Systems (paper number 11) | 807 |
+| `seed/igcse-paper2.json` | IGCSE Paper 2 – Algorithms, Programming and Logic (paper number 12) | 504 |
+
+Every file has the shape `{ items, papers, skipped, chapters }`. The A Level files were exported from the banks embedded in `paper1.html`–`paper4.html` in the Next-Level repo. If those pages change, export them again and rerun `db:setup`:
+
+```bash
+node scripts/export-alevel.js ../Next-Level      # folder that holds paper1.html–paper4.html
+```
+
+The IGCSE files are copies of `data/igcse-paper1.json` and `data/igcse-paper2.json` from the Next-Level repo; copy them again when they change.
+
+Questions refer to images by path, e.g. `figures/igcse/x.jpg`. The images are not in this repo: the frontend serves them from its `public/figures/` folder.
+
+## Setup
+
+You need [Node.js](https://nodejs.org) 20+ and PostgreSQL (the installer from postgresql.org includes pgAdmin 4).
+
+1. **Start PostgreSQL.** On a Mac with the postgresql.org installer it normally starts with the computer. Open pgAdmin and connect to *PostgreSQL 16* to check it is running.
+
+2. **Configure the server.**
+   ```bash
+   cp .env.example .env
+   ```
+   Open `.env` and set:
+
+   | Variable | Meaning |
+   |---|---|
+   | `DATABASE_URL` | Your PostgreSQL connection, with the `postgres` password you chose when installing |
+   | `JWT_SECRET` | Any long random text. It signs login tokens, so keep it secret |
+   | `PORT` | Port the API listens on (default `4000`) |
+   | `CORS_ORIGINS` | Comma-separated list of browser origins allowed to call the API (default `http://localhost:5173`) |
+
+   If you already used the old `server/` folder in Next-Level, copy its `.env` here and add `CORS_ORIGINS`. Your existing `next_level` database keeps working as it is.
+
+3. **Install and create the database.**
+   ```bash
+   npm install
+   npm run db:setup
+   ```
+   This creates a `next_level` database if it does not exist, creates any missing tables and loads every question from `seed/`. It is safe to run again; it updates questions without touching student data.
+
+4. **Start the API** (keep this terminal open):
+   ```bash
+   npm run dev       # restarts when you edit a file
+   npm start         # for production
+   ```
+   Check it at http://localhost:4000/api/health.
+
+5. **Create the teacher accounts** (students can only pick teachers that exist):
+   ```bash
+   npm run create-user -- --role teacher --username ms.karimova --name "Dilnoza Karimova" --password "choose-a-password" --subject 9618
+   npm run create-user -- --role admin --username admin --name "School Admin" --password "choose-a-password"
+   ```
+   For an IGCSE teacher use `--subject 0478`; a teacher of both uses `--subject 9618,0478`. Running it with an existing login name turns that account into a teacher/admin instead. Subjects live in the `subjects` table; `9618` and `0478` are added by `db:setup`.
+
+**Courses:** a student who chooses *Computer Science IGCSE (0478)* sees only IGCSE Papers 1 and 2; a *Computer Science (9618)* student sees Papers 1–4. Teachers see the papers of the subjects they teach, and the admin sees everything.
+
+## Connecting the frontend
+
+The React app calls the API at `/api/...` on its own origin.
+
+- **Local development:** nothing to change. `client/vite.config.js` in Next-Level already proxies `/api` to `http://localhost:4000`. Start this API, then in Next-Level run `cd client && npm install && npm run dev` and open http://localhost:5173.
+- **Production:** either serve the built frontend and this API behind one domain, with `/api` forwarded to this server (no CORS needed), or host them on different domains, add the frontend's origin to `CORS_ORIGINS`, and make the client call this server's full URL instead of `/api`.
+
+## Approving students
+
+New students start as **pending** and only see a "Waiting for your teacher" page. Approve them in either place:
+
+- **In the app:** the teacher logs in, opens **My students** and presses **Approve** (or **Reject**).
+- **In pgAdmin:** open the `users` table (View/Edit Data → All Rows), find the student by `username`, change `status` to `approved` and press **Save Data Changes** (F6). Use `rejected` to block someone. The change takes effect immediately.
+
+The `student_accounts` view lists every student with their subject, teacher and class, which makes finding someone easier.
+
+To make an account a teacher in pgAdmin instead of using the script, set `role` to `teacher` and add a row to `teacher_subjects` with their user id and the subject id.
+
+## Viewing the data in pgAdmin
+
+In pgAdmin open **Servers → PostgreSQL 16 → Databases → next_level → Schemas → public → Tables**. Right-click a table and choose **View/Edit Data → All Rows**.
+
+| Table | What it holds |
+|---|---|
+| `papers`, `chapters`, `exam_papers` | Paper titles, chapter names and each past paper sitting. IGCSE papers are numbers 11 and 12, linked to subject 0478 |
+| `questions` | Every question with its mark scheme (`criteria` is JSON). IGCSE ids start with `ig-`; `figures` / `answer_figures` list the images |
+| `users` | Every account: `username` (login name), `role` (student/teacher/admin), `status` (pending/approved/rejected), `class_name`, `subject_id`, `teacher_id`, `settings` (JSON). Passwords are stored hashed, never as plain text |
+| `subjects`, `teacher_subjects` | Subjects, and which teacher teaches which subject |
+| `student_accounts` (view) | Students with their subject, teacher and class |
+| `attempts` | Every answer a student has marked: the answer, ticked points and mark |
+| `bookmarks` | Questions each student has saved |
+| `latest_attempts` (view) | Only the most recent try per student per question |
+
+Example query (Tools → Query Tool):
+
+```sql
+SELECT u.name, q.paper, count(*) AS answered, sum(a.awarded) AS earned, sum(a.marks) AS available
+FROM latest_attempts a
+JOIN users u ON u.id = a.user_id
+JOIN questions q ON q.id = a.question_id
+GROUP BY u.name, q.paper
+ORDER BY u.name, q.paper;
+```
+
+## API
+
+All routes except `/api/auth/register`, `/api/auth/login`, `/api/auth/options` and `/api/health` need an `Authorization: Bearer <token>` header. Practice routes also need an approved account.
+
+| Method | Route | Purpose |
+|---|---|---|
+| GET | `/api/health` | Checks the API and the database connection |
+| GET | `/api/auth/options` | Subjects and teachers for the sign-up form |
+| POST | `/api/auth/register` | Student sign-up `{ name, username, email?, password, subject_id, teacher_id, class_name }` |
+| POST | `/api/auth/login` | Log in with login name (or email) and password, returns a token |
+| GET | `/api/auth/me` | Current user, with subject, teacher and settings |
+| PATCH | `/api/account/profile` | Change name, login name, email, class, subject or teacher (a new teacher means re-approval) |
+| PATCH | `/api/account/settings` | Appearance and study settings |
+| POST | `/api/account/password` | Change password `{ current, next }` |
+| DELETE | `/api/account` | Delete own student account `{ password }` |
+| GET | `/api/teacher/students` | Teacher: their students with scores per paper and recent activity |
+| GET | `/api/teacher/overview` | Teacher: class summaries and hardest topics |
+| GET | `/api/teacher/students/:id` | Teacher: one student in detail |
+| POST | `/api/teacher/students/:id/status` | Teacher: approve / reject a student `{ status }` |
+| GET | `/api/papers` | Papers, chapters, exam sittings and your progress |
+| GET | `/api/papers/:paper/questions` | Question list; filters `chapter`, `exam`, `type`, `search`, `status` (`new`/`review`/`done`), `bookmarked=1` |
+| GET | `/api/papers/:paper/next` | Suggested next question (optional `chapter`) |
+| GET | `/api/questions/:id` | Question, mark scheme, previous/next and your tries |
+| POST | `/api/questions/:id/attempts` | Save a marked answer `{ answer, ticked, awarded }` |
+| PUT / DELETE | `/api/questions/:id/bookmark` | Save / unsave a question |
+| GET | `/api/bookmarks` | Saved questions |
+| GET | `/api/stats` | Totals, weakest topics, recent answers, streak |
+| DELETE | `/api/progress?paper=N` | Clear your answers for one paper (or all, without `paper`) |
