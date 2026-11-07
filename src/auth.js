@@ -41,7 +41,22 @@ export function requireApproved(req, res, next) {
   next();
 }
 
-export function requireTeacher(req, res, next) {
-  if (req.role !== 'teacher' && req.role !== 'admin') return res.status(403).json({ error: 'Teachers only.' });
+// Roles from least to most powerful.
+export const ROLES = ['student', 'teacher', 'admin', 'super_admin'];
+export const isStaff = (role) => role === 'admin' || role === 'super_admin';
+
+// Allows the request only for the listed roles.
+export const requireRole = (roles, message = 'You do not have permission to do that.') => (req, res, next) => {
+  if (!roles.includes(req.role)) return res.status(403).json({ error: message });
+  next();
+};
+
+// Teachers, plus admins and super admins (who can see every teacher's work).
+export const requireTeacher = requireRole(['teacher', 'admin', 'super_admin'], 'Teachers only.');
+export const requireAdmin = requireRole(['admin', 'super_admin'], 'Admins only.');
+export const requireSuperAdmin = requireRole(['super_admin'], 'Super admins only.');
+
+export function requireStudent(req, res, next) {
+  if (req.role !== 'student') return res.status(403).json({ error: 'Students only.' });
   next();
 }

@@ -1,7 +1,9 @@
-// Creates a teacher or admin account, or promotes an existing account.
+// Creates a teacher, admin or super admin account, or promotes an existing account.
+// Use this to make the first super admin; after that, super admins appoint admins from the app (/api/admin).
 //
 //   npm run create-user -- --role teacher --username ms.karimova --name "Dilnoza Karimova" --password "secret123" --subject 9618
 //   npm run create-user -- --role admin --username principal --name "Head Teacher" --password "secret123"
+//   npm run create-user -- --role super_admin --username owner --name "Site Owner" --password "secret123"
 //   npm run create-user -- --role teacher --username existing.user --subject 9618     (promote, keeps password)
 //
 // --subject can be repeated, or given as a comma-separated list of subject codes.
@@ -22,7 +24,7 @@ const { values } = parseArgs({
 });
 
 async function main() {
-  if (!['teacher', 'admin', 'student'].includes(values.role)) throw new Error('--role must be teacher, admin or student');
+  if (!['teacher', 'admin', 'super_admin', 'student'].includes(values.role)) throw new Error('--role must be student, teacher, admin or super_admin');
   const username = String(values.username || '').trim().toLowerCase();
   if (!/^[a-z0-9._-]{3,30}$/.test(username)) throw new Error('--username must be 3–30 letters, numbers, dots, dashes or underscores');
 

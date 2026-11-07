@@ -1,5 +1,6 @@
 // Creates the database (if missing), creates the tables, and loads every question from seed/:
-// A Level 9618 from alevel-paper1-4.json, IGCSE 0478 from igcse-paper1-2.json.
+// A Level 9618 from alevel-paper1-4.json, IGCSE 0478 from igcse-paper1-2.json,
+// IGCSE Chemistry 0620 from chemistry-paper2/4/6.json.
 // Run with: npm run db:setup
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,9 +14,11 @@ const seedDir = path.resolve(here, '../seed');
 const SUBJECTS = {
   9618: 'Computer Science (9618)',
   '0478': 'Computer Science IGCSE (0478)',
+  '0620': 'Chemistry IGCSE (0620)',
 };
 
-// number: internal paper id (IGCSE papers are 11 and 12 so they never clash with 9618 Papers 1-4).
+// number: internal paper id. IGCSE Computer Science papers are 11 and 12 and IGCSE Chemistry papers are 22, 24 and 26,
+// so they never clash with 9618 Papers 1-4.
 const PAPERS = [
   { number: 1, subject: '9618', label: 'Paper 1', title: 'Theory Fundamentals', description: 'AS Level theory: data representation, hardware, networks, security, databases.', source: 'alevel-paper1.json' },
   { number: 2, subject: '9618', label: 'Paper 2', title: 'Fundamental Problem-solving and Programming Skills', description: 'AS Level pseudocode, algorithms and program design.', source: 'alevel-paper2.json' },
@@ -23,7 +26,22 @@ const PAPERS = [
   { number: 4, subject: '9618', label: 'Paper 4', title: 'Practical (Python)', description: 'A Level practical programming in Python.', source: 'alevel-paper4.json' },
   { number: 11, subject: '0478', label: 'IGCSE Paper 1', title: 'Computer Systems', description: 'IGCSE theory: data, transmission, hardware, software, the internet, emerging technologies.', source: 'igcse-paper1.json', examPrefix: 'ig-' },
   { number: 12, subject: '0478', label: 'IGCSE Paper 2', title: 'Algorithms, Programming and Logic', description: 'IGCSE algorithms, pseudocode programming, databases and Boolean logic.', source: 'igcse-paper2.json', examPrefix: 'ig-' },
+  { number: 22, subject: '0620', label: 'Chemistry Paper 2', title: 'Multiple Choice (Extended)', description: 'IGCSE Chemistry: 40 multiple-choice questions per paper across the whole syllabus.', source: 'chemistry-paper2.json', examPrefix: 'ch-' },
+  { number: 24, subject: '0620', label: 'Chemistry Paper 4', title: 'Theory (Extended)', description: 'IGCSE Chemistry structured questions: bonding, moles, electrolysis, energetics, organic and more.', source: 'chemistry-paper4.json', examPrefix: 'ch-' },
+  { number: 26, subject: '0620', label: 'Chemistry Paper 6', title: 'Alternative to Practical', description: 'IGCSE Chemistry practical skills: apparatus, tests for ions and gases, titrations, planning.', source: 'chemistry-paper6.json', examPrefix: 'ch-' },
 ];
+
+// Every IGCSE question must come from a Cambridge (CAIE) paper of its own syllabus, e.g. 0620/42 for Chemistry.
+function checkCambridgeSource(info, bank) {
+  if (!info.examPrefix) return;
+  for (const [code, p] of Object.entries(bank.papers)) {
+    const fromCaie = p.code.startsWith(`${info.subject}/`)
+      && [p.qp, p.ms].every((u) => /\/CAIE\//.test(u) && u.includes(`/${info.subject}_`));
+    if (!fromCaie) throw new Error(`${info.source}: ${code} (${p.code}) is not a Cambridge ${info.subject} paper.`);
+  }
+  const bad = bank.items.find((q) => !q.paper_code.startsWith(`${info.subject}/`) || !bank.papers[`${q.session}-${q.variant}`]);
+  if (bad) throw new Error(`${info.source}: question ${bad.id} is not from a Cambridge ${info.subject} paper.`);
+}
 
 // Every seed file has the shape { items, papers, skipped, chapters }.
 function loadBank(source) {
@@ -50,6 +68,14 @@ async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL is not set. Copy .env.example to .env first.');
 
+  // Read and check every question bank before touching the database.
+  const banks = PAPERS.map((info) => {
+    const loaded = loadBank(info.source);
+    checkCambridgeSource(info, loaded.bank);
+    return loaded;
+  });
+  console.log('Question banks checked: every IGCSE question is from a Cambridge (CAIE) paper of its syllabus');
+
   await ensureDatabase(url);
   const client = new pg.Client({ connectionString: url });
   await client.connect();
@@ -68,10 +94,10 @@ async function main() {
     subjectIds[code] = rows[0].id;
   }
   let total = 0;
-  for (const info of PAPERS) {
+  for (const [i, info] of PAPERS.entries()) {
     const paper = info.number;
     const prefix = info.examPrefix || '';
-    const { bank, chapters } = loadBank(info.source);
+    const { bank, chapters } = banks[i];
 
     await client.query(
       `INSERT INTO papers (number, title, description, subject_id, label) VALUES ($1, $2, $3, $4, $5)

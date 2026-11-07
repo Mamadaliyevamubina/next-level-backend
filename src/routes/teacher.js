@@ -1,14 +1,14 @@
 import { Router } from 'express';
 import { query } from '../db.js';
-import { requireAuth, requireTeacher, wrap } from '../auth.js';
+import { isStaff, requireAuth, requireTeacher, wrap } from '../auth.js';
 import * as stats from '../stats.js';
 import { visiblePapers } from '../scope.js';
 
 const router = Router();
 router.use(requireAuth, requireTeacher);
 
-// Teachers see the students who chose them; an admin sees every student.
-const scope = (req, alias = 's') => (req.role === 'admin'
+// Teachers see the students who chose them; admins and super admins see every student.
+export const scope = (req, alias = 's') => (isStaff(req.role)
   ? { sql: `${alias}.role = 'student'`, params: [] }
   : { sql: `${alias}.role = 'student' AND ${alias}.teacher_id = $1`, params: [req.userId] });
 
@@ -108,7 +108,18 @@ router.get('/students/:id', wrap(async (req, res) => {
     stats.totals(id, course), stats.byPaper(id, course), stats.byChapter(id, course), stats.weakest(id, 10),
     stats.recent(id, 25, true), stats.streak(id), stats.activity(id, 28),
   ]);
-  res.json({ student, totals, papers, chapters, weakest, recent, streak, activity });
+  const assignments = await query(
+    `SELECT a.id, a.title, a.due_at, ast.assigned_at, ast.submitted_at,
+            (SELECT count(*)::int FROM assignment_questions WHERE assignment_id = a.id) AS questions,
+            (SELECT coalesce(sum(q.marks), 0)::int FROM assignment_questions aq JOIN questions q ON q.id = aq.question_id
+              WHERE aq.assignment_id = a.id) AS marks,
+            (SELECT count(*)::int FROM latest_assignment_attempts l WHERE l.assignment_id = a.id AND l.user_id = $1) AS answered,
+            (SELECT coalesce(sum(l.awarded), 0)::int FROM latest_assignment_attempts l WHERE l.assignment_id = a.id AND l.user_id = $1) AS earned
+       FROM assignment_students ast JOIN assignments a ON a.id = ast.assignment_id
+      WHERE ast.student_id = $1 ORDER BY a.created_at DESC`,
+    [id],
+  );
+  res.json({ student, totals, papers, chapters, weakest, recent, streak, activity, assignments: assignments.rows });
 }));
 
 // Approve, block or move a student back to pending.

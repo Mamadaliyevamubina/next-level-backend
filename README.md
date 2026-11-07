@@ -1,6 +1,6 @@
-# Next Level backend · IGCSE 0478 and A Level 9618
+# Next Level backend · IGCSE 0478, IGCSE Chemistry 0620 and A Level 9618
 
-Express + PostgreSQL API for the Dombit International School Computer Science practice site (Cambridge IGCSE 0478 and AS & A Level 9618). The React frontend and the static pages live in the [Next-Level](https://github.com/Mamadaliyevamubina/Next-Level) repository.
+Express + PostgreSQL API for the Dombit International School past-paper practice site (Cambridge IGCSE Computer Science 0478, IGCSE Chemistry 0620 and AS & A Level Computer Science 9618). The React frontend and the static pages live in the [Next-Level](https://github.com/Mamadaliyevamubina/Next-Level) repository.
 
 Students sign up with a login name, choose their subject, teacher and class, and wait until their teacher approves them. Every account, answer, mark and bookmark is stored in a PostgreSQL database that you can open in pgAdmin.
 
@@ -18,11 +18,24 @@ Next-Level/client/   React app (Vite)              → http://localhost:5173
 this repo            Express API + PostgreSQL      → http://localhost:4000
 ```
 
-**Accounts:** students sign up themselves (pending until approved), teachers and admins are created by you. Each student has an Account page with profile, class details, appearance (light/dark, accent colour, text size, readable font, compact layout, reduced motion), study preferences (daily goal, main paper, streak) and security (change password, delete account).
+On this computer both are on the Desktop: `~/Desktop/9618-practice` (the Next-Level frontend) and `~/Desktop/next-level-backend` (this API). Run `npm run dev` here first, then `npm run dev` in `9618-practice/client`; the frontend forwards `/api` to `http://localhost:4000` (see [Connecting the frontend](#connecting-the-frontend)).
+
+## Roles
+
+| Role | Can do |
+|---|---|
+| `super_admin` | Everything. The only role that can create, promote, edit, block or delete **admins** (and other super admins), and the only role that can permanently delete accounts. The first one is made with `npm run create-user -- --role super_admin …` |
+| `admin` | See every account, every student's progress and every teacher's assignments. Create teachers and students, approve/block them, edit them, reset their passwords, move students to another teacher, switch someone between student and teacher. **Cannot** touch admin or super admin accounts, give anyone admin rights, or delete accounts (block them instead) |
+| `teacher` | See only the students who chose them: approve sign-ups, view their performance, and create **assignments** (quizzes from the question bank) for individual students or whole classes, then see each student's answers, score and whether they handed it in |
+| `student` | Their own profile and progress only. Practise questions from their course, and solve and hand in the assignments their teacher gave them |
+
+Nobody can change their own role or status through the admin API, so a super admin can never lock themselves out.
+
+**Accounts:** students sign up themselves (pending until approved), teachers are created by an admin or super admin (or with the script), admins are appointed by a super admin. Each student has an Account page with profile, class details, appearance (light/dark, accent colour, text size, readable font, compact layout, reduced motion), study preferences (daily goal, main paper, streak) and security (change password, delete account).
 
 **Teachers** see only the students who chose them: approve or block sign-ups, class averages, the topics the class finds hardest, and for each student their score by paper and chapter, weakest topics, 4-week activity and recent answers. An admin sees every student.
 
-**Practice features:** all 2,798 questions by paper and chapter, search and filters (exam sitting, not tried, lost marks, full marks, saved), self-marking against the mark scheme points, history of every try, "practise next" (picks questions you have not tried or lost marks on), saved questions, and a dashboard with your score, weakest topics and daily streak.
+**Practice features:** all 5,575 questions by paper and chapter, search and filters (exam sitting, not tried, lost marks, full marks, saved), self-marking against the mark scheme points, history of every try, "practise next" (picks questions you have not tried or lost marks on), saved questions, and a dashboard with your score, weakest topics and daily streak.
 
 ## Question data
 
@@ -34,6 +47,11 @@ this repo            Express API + PostgreSQL      → http://localhost:4000
 | `seed/alevel-paper4.json` | 9618 Paper 4 – Practical (Python) | 242 |
 | `seed/igcse-paper1.json` | IGCSE Paper 1 – Computer Systems (paper number 11) | 807 |
 | `seed/igcse-paper2.json` | IGCSE Paper 2 – Algorithms, Programming and Logic (paper number 12) | 504 |
+| `seed/chemistry-paper2.json` | IGCSE Chemistry Paper 2 – Multiple Choice, Extended (paper number 22) | 1,000 |
+| `seed/chemistry-paper4.json` | IGCSE Chemistry Paper 4 – Theory, Extended (paper number 24) | 1,235 |
+| `seed/chemistry-paper6.json` | IGCSE Chemistry Paper 6 – Alternative to Practical (paper number 26) | 542 |
+
+Every IGCSE question comes from an official Cambridge (CAIE) question paper and its published mark scheme, Feb/March 2023 to May/June 2026. `db:setup` checks this before loading: it stops if a seed file contains a paper that is not a Cambridge paper of that syllabus.
 
 Every file has the shape `{ items, papers, skipped, chapters }`. The A Level files were exported from the banks embedded in `paper1.html`–`paper4.html` in the Next-Level repo. If those pages change, export them again and rerun `db:setup`:
 
@@ -41,7 +59,7 @@ Every file has the shape `{ items, papers, skipped, chapters }`. The A Level fil
 node scripts/export-alevel.js ../Next-Level      # folder that holds paper1.html–paper4.html
 ```
 
-The IGCSE files are copies of `data/igcse-paper1.json` and `data/igcse-paper2.json` from the Next-Level repo; copy them again when they change.
+The IGCSE files are copies of `data/igcse-paper1.json`, `data/igcse-paper2.json` and `data/chemistry-paper2/4/6.json` from the Next-Level repo (built there with `tools/igcse/`); copy them again when they change.
 
 Questions refer to images by path, e.g. `figures/igcse/x.jpg`. The images are not in this repo: the frontend serves them from its `public/figures/` folder.
 
@@ -84,17 +102,19 @@ You need [Node.js](https://nodejs.org) 20+ and PostgreSQL (the installer from po
    ```bash
    npm run create-user -- --role teacher --username ms.karimova --name "Dilnoza Karimova" --password "choose-a-password" --subject 9618
    npm run create-user -- --role admin --username admin --name "School Admin" --password "choose-a-password"
+   npm run create-user -- --role super_admin --username owner --name "Site Owner" --password "choose-a-password"
    ```
-   For an IGCSE teacher use `--subject 0478`; a teacher of both uses `--subject 9618,0478`. Running it with an existing login name turns that account into a teacher/admin instead. Subjects live in the `subjects` table; `9618` and `0478` are added by `db:setup`.
+   Make at least one `super_admin` this way; after that, admins and teachers can be created in the app through `/api/admin/users`.
+   For an IGCSE Computer Science teacher use `--subject 0478`, for IGCSE Chemistry `--subject 0620`; a teacher of several uses e.g. `--subject 9618,0478`. Running it with an existing login name turns that account into a teacher/admin instead. Subjects live in the `subjects` table; `9618`, `0478` and `0620` are added by `db:setup`.
 
-**Courses:** a student who chooses *Computer Science IGCSE (0478)* sees only IGCSE Papers 1 and 2; a *Computer Science (9618)* student sees Papers 1–4. Teachers see the papers of the subjects they teach, and the admin sees everything.
+**Courses:** a student who chooses *Computer Science IGCSE (0478)* sees only IGCSE Papers 1 and 2; a *Chemistry IGCSE (0620)* student sees Chemistry Papers 2, 4 and 6; a *Computer Science (9618)* student sees Papers 1–4. Teachers see the papers of the subjects they teach, and the admin sees everything.
 
 ## Connecting the frontend
 
 The React app calls the API at `/api/...` on its own origin.
 
-- **Local development:** nothing to change. `client/vite.config.js` in Next-Level already proxies `/api` to `http://localhost:4000`. Start this API, then in Next-Level run `cd client && npm install && npm run dev` and open http://localhost:5173.
-- **Production:** either serve the built frontend and this API behind one domain, with `/api` forwarded to this server (no CORS needed), or host them on different domains, add the frontend's origin to `CORS_ORIGINS`, and make the client call this server's full URL instead of `/api`.
+- **Local development:** nothing to change. `client/vite.config.js` in Next-Level proxies `/api` to `http://localhost:4000` (or to `API_PROXY_TARGET` in `client/.env` if this API runs on another port). Start this API, then in Next-Level run `cd client && npm install && npm run dev` and open http://localhost:5173.
+- **Production:** either serve the built frontend and this API behind one domain, with `/api` forwarded to this server (no CORS needed), or host them on different domains, add the frontend's origin to `CORS_ORIGINS`, and set `VITE_API_URL` in the frontend's `client/.env` to this server's full URL before building.
 
 ## Approving students
 
@@ -113,12 +133,14 @@ In pgAdmin open **Servers → PostgreSQL 16 → Databases → next_level → Sch
 
 | Table | What it holds |
 |---|---|
-| `papers`, `chapters`, `exam_papers` | Paper titles, chapter names and each past paper sitting. IGCSE papers are numbers 11 and 12, linked to subject 0478 |
+| `papers`, `chapters`, `exam_papers` | Paper titles, chapter names and each past paper sitting. IGCSE Computer Science papers are numbers 11 and 12 (subject 0478); IGCSE Chemistry papers are 22, 24 and 26 (subject 0620) |
 | `questions` | Every question with its mark scheme (`criteria` is JSON). IGCSE ids start with `ig-`; `figures` / `answer_figures` list the images |
 | `users` | Every account: `username` (login name), `role` (student/teacher/admin), `status` (pending/approved/rejected), `class_name`, `subject_id`, `teacher_id`, `settings` (JSON). Passwords are stored hashed, never as plain text |
 | `subjects`, `teacher_subjects` | Subjects, and which teacher teaches which subject |
 | `student_accounts` (view) | Students with their subject, teacher and class |
-| `attempts` | Every answer a student has marked: the answer, ticked points and mark |
+| `attempts` | Every answer a student has marked: the answer, ticked points and mark. `assignment_id` is set when the answer was given inside an assignment |
+| `assignments`, `assignment_questions`, `assignment_students` | Quizzes teachers set, their questions in order, and which students got them (with `submitted_at`) |
+| `latest_assignment_attempts` (view) | The most recent try per student per question inside each assignment |
 | `bookmarks` | Questions each student has saved |
 | `latest_attempts` (view) | Only the most recent try per student per question |
 
@@ -135,11 +157,12 @@ ORDER BY u.name, q.paper;
 
 ## API
 
-All routes except `/api/auth/register`, `/api/auth/login`, `/api/auth/options` and `/api/health` need an `Authorization: Bearer <token>` header. Practice routes also need an approved account.
+All routes except `/api/catalog`, `/api/auth/register`, `/api/auth/login`, `/api/auth/options` and `/api/health` need an `Authorization: Bearer <token>` header. Practice routes also need an approved account.
 
 | Method | Route | Purpose |
 |---|---|---|
 | GET | `/api/health` | Checks the API and the database connection |
+| GET | `/api/catalog` | Public: courses with their papers, chapters and live question counts (the frontend's home page) |
 | GET | `/api/auth/options` | Subjects and teachers for the sign-up form |
 | POST | `/api/auth/register` | Student sign-up `{ name, username, email?, password, subject_id, teacher_id, class_name }` |
 | POST | `/api/auth/login` | Log in with login name (or email) and password, returns a token |
@@ -152,6 +175,23 @@ All routes except `/api/auth/register`, `/api/auth/login`, `/api/auth/options` a
 | GET | `/api/teacher/overview` | Teacher: class summaries and hardest topics |
 | GET | `/api/teacher/students/:id` | Teacher: one student in detail |
 | POST | `/api/teacher/students/:id/status` | Teacher: approve / reject a student `{ status }` |
+| GET | `/api/teacher/assignments` | Teacher: their assignments with counts (admins see all) |
+| POST | `/api/teacher/assignments` | Teacher: create `{ title, instructions?, due_at?, question_ids, student_ids?, class_names? }` |
+| GET | `/api/teacher/assignments/:id` | Teacher: questions and each student's score and submission |
+| PATCH | `/api/teacher/assignments/:id` | Teacher: change `{ title?, instructions?, due_at?, question_ids?, add_student_ids?, add_class_names?, remove_student_ids? }` |
+| POST | `/api/teacher/assignments/:id/students/:studentId/reopen` | Teacher: let a student change a handed-in assignment |
+| DELETE | `/api/teacher/assignments/:id` | Teacher: delete an assignment |
+| GET | `/api/assignments` | Student: my assignments with progress |
+| GET | `/api/assignments/:id` | Student: the questions (with mark scheme for self-marking) and my latest answer to each |
+| POST | `/api/assignments/:id/questions/:questionId/attempts` | Student: save a marked answer `{ answer, ticked, awarded }` |
+| POST | `/api/assignments/:id/submit` | Student: hand it in (answers lock until the teacher reopens it) |
+| GET | `/api/admin/overview` | Admin: accounts by role and status, weekly activity, assignment counts |
+| GET | `/api/admin/users` | Admin: every account; filters `role`, `status`, `search`. Each row has `can_manage` |
+| POST | `/api/admin/users` | Admin: create `{ role, name, username, email?, password, subjects? (teacher), subject_id, teacher_id, class_name (student) }` |
+| PATCH | `/api/admin/users/:id` | Admin: edit `{ name?, email?, status?, class_name?, subject_id?, teacher_id?, subjects? }` |
+| POST | `/api/admin/users/:id/role` | Admin: change role `{ role }` (admin roles need a super admin) |
+| POST | `/api/admin/users/:id/password` | Admin: set a new password `{ password }` |
+| DELETE | `/api/admin/users/:id` | Super admin: delete an account |
 | GET | `/api/papers` | Papers, chapters, exam sittings and your progress |
 | GET | `/api/papers/:paper/questions` | Question list; filters `chapter`, `exam`, `type`, `search`, `status` (`new`/`review`/`done`), `bookmarked=1` |
 | GET | `/api/papers/:paper/next` | Suggested next question (optional `chapter`) |
