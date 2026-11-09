@@ -77,6 +77,10 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err.message);
+  if (err.code === 'ECONNREFUSED' || err.errors?.some((e) => e.code === 'ECONNREFUSED')) {
+    console.error('Could not connect to PostgreSQL: it is not running, or DATABASE_URL in .env points to the wrong host/port.');
+  } else {
+    console.error(err.message || err.code || err);
+  }
   process.exit(1);
 });

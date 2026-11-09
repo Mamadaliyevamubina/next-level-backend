@@ -1,6 +1,6 @@
-# Next Level backend · IGCSE 0478, IGCSE Chemistry 0620 and A Level 9618
+# Next Level backend · IGCSE 0478 and 0620, A Level 9618 and 9701
 
-Express + PostgreSQL API for the Dombit International School past-paper practice site (Cambridge IGCSE Computer Science 0478, IGCSE Chemistry 0620 and AS & A Level Computer Science 9618). The React frontend and the static pages live in the [Next-Level](https://github.com/Mamadaliyevamubina/Next-Level) repository.
+Express + PostgreSQL API for the Dombit International School past-paper practice site (Cambridge IGCSE Computer Science 0478 and Chemistry 0620, and AS & A Level Computer Science 9618 and Chemistry 9701). The React frontend and the static pages live in the [Next-Level](https://github.com/Mamadaliyevamubina/Next-Level) repository.
 
 Students sign up with a login name, choose their subject, teacher and class, and wait until their teacher approves them. Every account, answer, mark and bookmark is stored in a PostgreSQL database that you can open in pgAdmin.
 
@@ -35,7 +35,7 @@ Nobody can change their own role or status through the admin API, so a super adm
 
 **Teachers** see only the students who chose them: approve or block sign-ups, class averages, the topics the class finds hardest, and for each student their score by paper and chapter, weakest topics, 4-week activity and recent answers. An admin sees every student.
 
-**Practice features:** all 5,575 questions by paper and chapter, search and filters (exam sitting, not tried, lost marks, full marks, saved), self-marking against the mark scheme points, history of every try, "practise next" (picks questions you have not tried or lost marks on), saved questions, and a dashboard with your score, weakest topics and daily streak.
+**Practice features:** all 12,884 questions by paper and chapter, search and filters (exam sitting, not tried, lost marks, full marks, saved), self-marking against the mark scheme points, history of every try, "practise next" (picks questions you have not tried or lost marks on), saved questions, and a dashboard with your score, weakest topics and daily streak.
 
 ## Question data
 
@@ -47,11 +47,19 @@ Nobody can change their own role or status through the admin API, so a super adm
 | `seed/alevel-paper4.json` | 9618 Paper 4 – Practical (Python) | 242 |
 | `seed/igcse-paper1.json` | IGCSE Paper 1 – Computer Systems (paper number 11) | 807 |
 | `seed/igcse-paper2.json` | IGCSE Paper 2 – Algorithms, Programming and Logic (paper number 12) | 504 |
+| `seed/chemistry-paper1.json` | IGCSE Chemistry Paper 1 – Multiple Choice, Core (paper number 21) | 1,000 |
 | `seed/chemistry-paper2.json` | IGCSE Chemistry Paper 2 – Multiple Choice, Extended (paper number 22) | 1,000 |
+| `seed/chemistry-paper3.json` | IGCSE Chemistry Paper 3 – Theory, Core (paper number 23) | 1,376 |
 | `seed/chemistry-paper4.json` | IGCSE Chemistry Paper 4 – Theory, Extended (paper number 24) | 1,235 |
+| `seed/chemistry-paper5.json` | IGCSE Chemistry Paper 5 – Practical Test (paper number 25) | 410 |
 | `seed/chemistry-paper6.json` | IGCSE Chemistry Paper 6 – Alternative to Practical (paper number 26) | 542 |
+| `seed/chemistry-alevel-paper1.json` | A Level Chemistry 9701 Paper 1 – Multiple Choice (AS) (paper number 41) | 999 |
+| `seed/chemistry-alevel-paper2.json` | A Level Chemistry 9701 Paper 2 – AS Level Structured Questions (paper number 42) | 933 |
+| `seed/chemistry-alevel-paper3.json` | A Level Chemistry 9701 Paper 3 – Advanced Practical Skills (AS) (paper number 43) | 615 |
+| `seed/chemistry-alevel-paper4.json` | A Level Chemistry 9701 Paper 4 – A Level Structured Questions (paper number 44) | 1,425 |
+| `seed/chemistry-alevel-paper5.json` | A Level Chemistry 9701 Paper 5 – Planning, Analysis and Evaluation (paper number 45) | 551 |
 
-Every IGCSE question comes from an official Cambridge (CAIE) question paper and its published mark scheme, Feb/March 2023 to May/June 2026. `db:setup` checks this before loading: it stops if a seed file contains a paper that is not a Cambridge paper of that syllabus.
+Every IGCSE and A Level Chemistry question comes from an official Cambridge (CAIE) question paper and its published mark scheme, Feb/March 2023 to May/June 2026. A Level Chemistry topics follow the 9701 syllabus (1–22 AS Level, 23–37 A Level). `db:setup` checks this before loading: it stops if a seed file contains a paper that is not a Cambridge paper of that syllabus.
 
 Every file has the shape `{ items, papers, skipped, chapters }`. The A Level files were exported from the banks embedded in `paper1.html`–`paper4.html` in the Next-Level repo. If those pages change, export them again and rerun `db:setup`:
 
@@ -59,7 +67,7 @@ Every file has the shape `{ items, papers, skipped, chapters }`. The A Level fil
 node scripts/export-alevel.js ../Next-Level      # folder that holds paper1.html–paper4.html
 ```
 
-The IGCSE files are copies of `data/igcse-paper1.json`, `data/igcse-paper2.json` and `data/chemistry-paper2/4/6.json` from the Next-Level repo (built there with `tools/igcse/`); copy them again when they change.
+The IGCSE files are copies of `data/igcse-paper1.json`, `data/igcse-paper2.json` and `data/chemistry-paper1…6.json` and `data/chemistry-alevel-paper1…5.json` from the Next-Level repo (built there with `tools/igcse/`); copy them again when they change.
 
 Questions refer to images by path, e.g. `figures/igcse/x.jpg`. The images are not in this repo: the frontend serves them from its `public/figures/` folder.
 
@@ -105,9 +113,9 @@ You need [Node.js](https://nodejs.org) 20+ and PostgreSQL (the installer from po
    npm run create-user -- --role super_admin --username owner --name "Site Owner" --password "choose-a-password"
    ```
    Make at least one `super_admin` this way; after that, admins and teachers can be created in the app through `/api/admin/users`.
-   For an IGCSE Computer Science teacher use `--subject 0478`, for IGCSE Chemistry `--subject 0620`; a teacher of several uses e.g. `--subject 9618,0478`. Running it with an existing login name turns that account into a teacher/admin instead. Subjects live in the `subjects` table; `9618`, `0478` and `0620` are added by `db:setup`.
+   For an IGCSE Computer Science teacher use `--subject 0478`, for IGCSE Chemistry `--subject 0620`, for A Level Chemistry `--subject 9701`; a teacher of several uses e.g. `--subject 9618,0478`. Running it with an existing login name turns that account into a teacher/admin instead. Subjects live in the `subjects` table; `9618`, `0478`, `0620` and `9701` are added by `db:setup`.
 
-**Courses:** a student who chooses *Computer Science IGCSE (0478)* sees only IGCSE Papers 1 and 2; a *Chemistry IGCSE (0620)* student sees Chemistry Papers 2, 4 and 6; a *Computer Science (9618)* student sees Papers 1–4. Teachers see the papers of the subjects they teach, and the admin sees everything.
+**Courses:** a student who chooses *Computer Science IGCSE (0478)* sees only IGCSE Papers 1 and 2; a *Chemistry IGCSE (0620)* student sees Chemistry Papers 1–6; a *Chemistry (9701)* student sees A Level Chemistry Papers 1–5; a *Computer Science (9618)* student sees Papers 1–4. Teachers see the papers of the subjects they teach, and the admin sees everything.
 
 ## Connecting the frontend
 
@@ -133,7 +141,7 @@ In pgAdmin open **Servers → PostgreSQL 16 → Databases → next_level → Sch
 
 | Table | What it holds |
 |---|---|
-| `papers`, `chapters`, `exam_papers` | Paper titles, chapter names and each past paper sitting. IGCSE Computer Science papers are numbers 11 and 12 (subject 0478); IGCSE Chemistry papers are 22, 24 and 26 (subject 0620) |
+| `papers`, `chapters`, `exam_papers` | Paper titles, chapter names and each past paper sitting. IGCSE Computer Science papers are numbers 11 and 12 (subject 0478); IGCSE Chemistry papers are 21–26 (subject 0620); A Level Chemistry papers are 41–45 (subject 9701) |
 | `questions` | Every question with its mark scheme (`criteria` is JSON). IGCSE ids start with `ig-`; `figures` / `answer_figures` list the images |
 | `users` | Every account: `username` (login name), `role` (student/teacher/admin), `status` (pending/approved/rejected), `class_name`, `subject_id`, `teacher_id`, `settings` (JSON). Passwords are stored hashed, never as plain text |
 | `subjects`, `teacher_subjects` | Subjects, and which teacher teaches which subject |
