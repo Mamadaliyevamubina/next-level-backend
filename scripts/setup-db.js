@@ -16,9 +16,10 @@ const SUBJECTS = {
   '0478': 'Computer Science IGCSE (0478)',
   '0620': 'Chemistry IGCSE (0620)',
   9701: 'Chemistry (9701)',
+  9700: 'Biology (9700)',
 };
 
-// number: internal paper id. IGCSE Computer Science papers are 11 and 12 and IGCSE Chemistry papers are 21–26 (the paper's own number + 20) and A Level Chemistry papers are 41–45,
+// number: internal paper id. IGCSE Computer Science papers are 11 and 12 and IGCSE Chemistry papers are 21–26 (the paper's own number + 20) A Level Chemistry papers are 41–45 and A Level Biology papers are 51–55,
 // so they never clash with 9618 Papers 1-4.
 const PAPERS = [
   { number: 1, subject: '9618', label: 'Paper 1', title: 'Theory Fundamentals', description: 'AS Level theory: data representation, hardware, networks, security, databases.', source: 'alevel-paper1.json' },
@@ -38,6 +39,11 @@ const PAPERS = [
   { number: 43, subject: '9701', label: 'A Level Chemistry Paper 3', title: 'Advanced Practical Skills (AS)', description: 'AS Level Chemistry practical: titrations, enthalpy experiments, qualitative analysis.', source: 'chemistry-alevel-paper3.json', examPrefix: 'ac-' },
   { number: 44, subject: '9701', label: 'A Level Chemistry Paper 4', title: 'A Level Structured Questions', description: 'A Level Chemistry: lattice energy, electrochemistry, kinetics, transition elements, NMR and more.', source: 'chemistry-alevel-paper4.json', examPrefix: 'ac-' },
   { number: 45, subject: '9701', label: 'A Level Chemistry Paper 5', title: 'Planning, Analysis and Evaluation', description: 'A Level Chemistry: planning experiments, processing data and evaluating results.', source: 'chemistry-alevel-paper5.json', examPrefix: 'ac-' },
+  { number: 51, subject: '9700', label: 'A Level Biology Paper 1', title: 'Multiple Choice (AS)', description: 'AS Level Biology: 40 multiple-choice questions on cells, molecules, enzymes, transport and immunity.', source: 'biology-alevel-paper1.json', examPrefix: 'ab-' },
+  { number: 52, subject: '9700', label: 'A Level Biology Paper 2', title: 'AS Level Structured Questions', description: 'AS Level Biology structured questions: cell structure, biological molecules, enzymes, membranes, DNA, transport, infectious diseases and immunity.', source: 'biology-alevel-paper2.json', examPrefix: 'ab-' },
+  { number: 53, subject: '9700', label: 'A Level Biology Paper 3', title: 'Advanced Practical Skills (AS)', description: 'AS Level Biology practical: investigations, microscopy, drawings, graphs and food tests.', source: 'biology-alevel-paper3.json', examPrefix: 'ab-' },
+  { number: 54, subject: '9700', label: 'A Level Biology Paper 4', title: 'A Level Structured Questions', description: 'A Level Biology: respiration, photosynthesis, homeostasis, coordination, inheritance, evolution and genetic technology.', source: 'biology-alevel-paper4.json', examPrefix: 'ab-' },
+  { number: 55, subject: '9700', label: 'A Level Biology Paper 5', title: 'Planning, Analysis and Evaluation', description: 'A Level Biology: planning investigations, analysing data, statistics and evaluating results.', source: 'biology-alevel-paper5.json', examPrefix: 'ab-' },
 ];
 
 // Every IGCSE question must come from a Cambridge (CAIE) paper of its own syllabus, e.g. 0620/42 for Chemistry.

@@ -1,3 +1,5 @@
 node_modules/
 .env
 .DS_Store
+# Login names and passwords made by npm run import-users
+*-passwords.csv

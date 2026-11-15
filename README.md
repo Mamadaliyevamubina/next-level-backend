@@ -128,6 +128,31 @@ The React app calls the API at `/api/...` on its own origin.
 - **Local development:** nothing to change. `client/vite.config.js` in Next-Level proxies `/api` to `http://localhost:4000` (or to `API_PROXY_TARGET` in `client/.env` if this API runs on another port). Start this API, then in Next-Level run `cd client && npm install && npm run dev` and open http://localhost:5173.
 - **Production:** either serve the built frontend and this API behind one domain, with `/api` forwarded to this server (no CORS needed), or host them on different domains, add the frontend's origin to `CORS_ORIGINS`, and set `VITE_API_URL` in the frontend's `client/.env` to this server's full URL before building.
 
+## Adding a whole class at once
+
+Put teachers and students in a spreadsheet, save it as CSV, and import it. Each student is linked to their class, subject and teacher, and is approved straight away.
+
+Start from `templates/users-template.csv`:
+
+| Column | Teachers | Students |
+|---|---|---|
+| `role` | `teacher` | `student` (or leave empty) |
+| `name` | Full name | Full name |
+| `username` | Optional: made from the name if empty (`Aziz Karimov` → `aziz.karimov`) | Same |
+| `email`, `password` | Optional: a random password is made for new accounts if empty | Same |
+| `class` | – | e.g. `12A` |
+| `subject` | Subjects they teach: `9618;0478` | One subject code: `9618`, `9701`, `0478` or `0620` |
+| `teacher` | – | The teacher's login name or full name |
+
+```bash
+npm run import-users -- ~/Desktop/students.csv          # checks every row, saves nothing
+npm run import-users -- ~/Desktop/students.csv --save   # adds / updates the accounts
+```
+
+- Nothing is saved if any row has a problem (unknown teacher, a teacher who does not teach that subject, missing class…); every problem is listed with its line number.
+- Running the same file again updates people instead of adding them twice, so you can fix a class or move a student to another teacher by editing the sheet and importing it again.
+- New login names and passwords go to `students-passwords.csv` next to your file (a new file each time, never overwritten). Hand them out, then delete the file. Password files are ignored by git.
+
 ## Approving students
 
 New students start as **pending** and only see a "Waiting for your teacher" page. Approve them in either place:
