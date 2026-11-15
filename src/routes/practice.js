@@ -3,6 +3,7 @@ import { query } from '../db.js';
 import { requireApproved, requireAuth, wrap } from '../auth.js';
 import * as stats from '../stats.js';
 import { visiblePapers } from '../scope.js';
+import { examinerReport } from '../examiner.js';
 
 const router = Router();
 router.use(requireAuth, requireApproved);
@@ -141,7 +142,8 @@ router.get('/questions/:id', wrap(async (req, res) => {
       WHERE user_id = $1 AND question_id = $2 ORDER BY created_at DESC, id DESC`,
     [req.userId, question.id],
   );
-  res.json({ question, ...nav.rows[0], attempts: attempts.rows });
+  const examiner = await examinerReport(question.exam_code, question.label);
+  res.json({ question, ...nav.rows[0], attempts: attempts.rows, examiner });
 }));
 
 // Save a self-marked attempt. The mark is checked against the question's maximum.

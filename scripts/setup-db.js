@@ -73,6 +73,31 @@ async function ensureDatabase(url) {
   await client.end();
 }
 
+// Cambridge examiner reports (seed/examiner-reports.json, built with tools/examiner in Next-Level):
+// replaced in full each time, only for exam papers that exist in the database.
+async function loadExaminerReports(client) {
+  const file = path.join(seedDir, 'examiner-reports.json');
+  if (!fs.existsSync(file)) return;
+  const reports = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const { rows } = await client.query('SELECT code FROM exam_papers');
+  const known = new Set(rows.map((r) => r.code));
+  const list = Object.entries(reports).filter(([code]) => known.has(code));
+  await client.query('DELETE FROM examiner_reports');
+  const col = (fn) => list.map(fn);
+  await client.query(
+    `INSERT INTO examiner_reports (exam_code, title, key_messages, general, url)
+     SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])`,
+    [col(([c]) => c), col(([, r]) => r.title || ''), col(([, r]) => r.key_messages || ''), col(([, r]) => r.general || ''), col(([, r]) => r.url || '')],
+  );
+  const comments = list.flatMap(([code, r]) => Object.entries(r.questions || {}).map(([label, text]) => [code, label, text]));
+  await client.query(
+    `INSERT INTO examiner_comments (exam_code, label, comment)
+     SELECT * FROM unnest($1::text[], $2::text[], $3::text[])`,
+    [comments.map((c) => c[0]), comments.map((c) => c[1]), comments.map((c) => c[2])],
+  );
+  console.log(`Examiner reports: ${list.length} papers, ${comments.length} question comments`);
+}
+
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL is not set. Copy .env.example to .env first.');
@@ -155,6 +180,7 @@ async function main() {
     total += bank.items.length;
     console.log(`${info.subject} ${info.label}: ${bank.items.length} questions`);
   }
+  await loadExaminerReports(client);
   await client.query('COMMIT');
   await client.end();
   console.log(`Done. ${total} questions loaded.`);

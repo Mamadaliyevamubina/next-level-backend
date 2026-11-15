@@ -63,7 +63,7 @@ export async function loadProfile(id) {
 export async function validTeacherChoice(subjectId, teacherId) {
   const { rowCount } = await query(
     `SELECT 1 FROM users t JOIN teacher_subjects ts ON ts.teacher_id = t.id
-      WHERE t.id = $1 AND ts.subject_id = $2 AND t.role IN ('teacher', 'admin') AND t.status = 'approved'`,
+      WHERE t.id = $1 AND ts.subject_id = $2 AND t.role IN ('teacher', 'admin', 'super_admin') AND t.status = 'approved'`,
     [teacherId, subjectId],
   );
   return rowCount > 0;

@@ -69,6 +69,10 @@ node scripts/export-alevel.js ../Next-Level      # folder that holds paper1.html
 
 The IGCSE files are copies of `data/igcse-paper1.json`, `data/igcse-paper2.json` and `data/chemistry-paper1…6.json` and `data/chemistry-alevel-paper1…5.json` from the Next-Level repo (built there with `tools/igcse/`); copy them again when they change.
 
+### Examiner reports
+
+`seed/examiner-reports.json` holds the Cambridge Principal Examiner Reports for every subject and session (37 reports, Feb/March 2023 to Oct/Nov 2025; the May/June 2026 reports were not yet available online): for each exam paper its key messages and general comments, and the examiners' comment on each question part (about 9,200 comments). `db:setup` loads them into the `examiner_reports` and `examiner_comments` tables, and `GET /api/questions/:id` returns them as `examiner` (`null` when there is no report). The file is built from the report PDFs with `tools/examiner/build-examiner.mjs` in the Next-Level repo.
+
 Questions refer to images by path, e.g. `figures/igcse/x.jpg`. The images are not in this repo: the frontend serves them from its `public/figures/` folder.
 
 ## Setup

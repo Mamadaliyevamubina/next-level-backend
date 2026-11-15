@@ -179,3 +179,20 @@ SELECT DISTINCT ON (assignment_id, user_id, question_id) *
 FROM attempts
 WHERE assignment_id IS NOT NULL
 ORDER BY assignment_id, user_id, question_id, created_at DESC, id DESC;
+
+-- Cambridge Principal Examiner Reports: comments on each exam paper (key messages, general comments)
+-- and on each question part, loaded by db:setup from seed/examiner-reports.json.
+CREATE TABLE IF NOT EXISTS examiner_reports (
+  exam_code    TEXT PRIMARY KEY,  -- same code as exam_papers.code, e.g. ch-s24-42
+  title        TEXT NOT NULL DEFAULT '',
+  key_messages TEXT NOT NULL DEFAULT '',
+  general      TEXT NOT NULL DEFAULT '',
+  url          TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS examiner_comments (
+  exam_code TEXT NOT NULL REFERENCES examiner_reports(exam_code) ON DELETE CASCADE,
+  label     TEXT NOT NULL,         -- question label as in questions.label, e.g. 2(a)(i), or just 3
+  comment   TEXT NOT NULL,
+  PRIMARY KEY (exam_code, label)
+);
