@@ -1,14 +1,18 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { query } from '../db.js';
+import { pool, query } from '../db.js';
 import { requireAuth, wrap } from '../auth.js';
-import { EMAIL_RE, USERNAME_RE, cleanSettings, loadProfile, validTeacherChoice } from '../users.js';
+import {
+  EMAIL_RE, USERNAME_RE, addsNewTeacher, checkStudentChoices, choicesFromBody, cleanSettings, currentPairs, inTransaction,
+  loadProfile, setStudentSubjects,
+} from '../users.js';
 
 const router = Router();
 router.use(requireAuth);
 
-// Update name, login name, email, and (for students) class, subject and teacher.
-// Moving to a different teacher or subject needs the new teacher's approval again.
+// Update name, login name, email, and (for students) grade, class and subjects:
+// { name?, username?, email?, grade?, class_name?, subjects?: [{ subject_id, teacher_id }] }
+// Adding a subject with a teacher who has not approved the student yet sends the account back for approval.
 router.patch('/profile', wrap(async (req, res) => {
   const current = await loadProfile(req.userId);
   const name = req.body.name === undefined ? current.name : String(req.body.name).trim();
@@ -29,32 +33,36 @@ router.patch('/profile', wrap(async (req, res) => {
     return res.status(409).json({ error: clash.rows[0].same_username ? 'That login name is already taken.' : 'Another account already uses that email.' });
   }
 
-  let { class_name: className, subject_id: subjectId, teacher_id: teacherId, status } = current;
+  let { class_name: className, grade, status } = current;
+  let pairs = null;
   let needsApproval = false;
   if (current.role === 'student') {
     if (req.body.class_name !== undefined) {
       className = String(req.body.class_name).trim();
       if (!className) return res.status(400).json({ error: 'Class cannot be empty.' });
     }
-    const nextSubject = req.body.subject_id === undefined ? subjectId : Number(req.body.subject_id);
-    const nextTeacher = req.body.teacher_id === undefined ? teacherId : Number(req.body.teacher_id);
-    if (nextSubject !== subjectId || nextTeacher !== teacherId) {
-      if (!(await validTeacherChoice(nextSubject, nextTeacher))) {
-        return res.status(400).json({ error: 'Choose a teacher who teaches that subject.' });
+    const wanted = choicesFromBody(req.body);
+    if (wanted !== undefined || req.body.grade !== undefined) {
+      const choices = await checkStudentChoices(req.body.grade ?? grade, wanted ?? currentPairs(current));
+      if (choices.error) return res.status(400).json({ error: choices.error });
+      grade = choices.grade;
+      pairs = choices.pairs;
+      if (addsNewTeacher(currentPairs(current), pairs)) {
+        status = 'pending';
+        needsApproval = true;
       }
-      subjectId = nextSubject;
-      teacherId = nextTeacher;
-      status = 'pending';
-      needsApproval = true;
     }
   }
 
-  await query(
-    `UPDATE users SET name = $2, username = $3, email = $4, class_name = $5, subject_id = $6, teacher_id = $7,
-            status = $8, approved_at = CASE WHEN $8 = 'pending' THEN NULL ELSE approved_at END
-      WHERE id = $1`,
-    [req.userId, name, username, email, className, subjectId, teacherId, status],
-  );
+  await inTransaction(pool, async (client) => {
+    await client.query(
+      `UPDATE users SET name = $2, username = $3, email = $4, class_name = $5, grade = $6,
+              status = $7, approved_at = CASE WHEN $7 = 'pending' THEN NULL ELSE approved_at END
+        WHERE id = $1`,
+      [req.userId, name, username, email, className, grade, status],
+    );
+    if (pairs) await setStudentSubjects(client, req.userId, pairs);
+  });
   res.json({ user: await loadProfile(req.userId), needsApproval });
 }));
 

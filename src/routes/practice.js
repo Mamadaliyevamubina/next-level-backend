@@ -4,6 +4,7 @@ import { requireApproved, requireAuth, wrap } from '../auth.js';
 import * as stats from '../stats.js';
 import { visiblePapers } from '../scope.js';
 import { examinerReport } from '../examiner.js';
+import { MARKING_COLUMNS, MarkingError, aiEnabled, markAnswer, underLimit } from '../ai.js';
 
 const router = Router();
 router.use(requireAuth, requireApproved);
@@ -138,12 +139,12 @@ router.get('/questions/:id', wrap(async (req, res) => {
     [question.id, question.paper],
   );
   const attempts = await query(
-    `SELECT id, answer, ticked, awarded, marks, created_at FROM attempts
+    `SELECT id, answer, ticked, awarded, marks, marked_by, created_at FROM attempts
       WHERE user_id = $1 AND question_id = $2 ORDER BY created_at DESC, id DESC`,
     [req.userId, question.id],
   );
   const examiner = await examinerReport(question.exam_code, question.label);
-  res.json({ question, ...nav.rows[0], attempts: attempts.rows, examiner });
+  res.json({ question, ...nav.rows[0], attempts: attempts.rows, examiner, ai_marking: aiEnabled() });
 }));
 
 // Save a self-marked attempt. The mark is checked against the question's maximum.
@@ -161,10 +162,43 @@ router.post('/questions/:id/attempts', wrap(async (req, res) => {
 
   const saved = await query(
     `INSERT INTO attempts (user_id, question_id, answer, ticked, awarded, marks)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, answer, ticked, awarded, marks, created_at`,
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, answer, ticked, awarded, marks, marked_by, created_at`,
     [req.userId, req.params.id, answer, ticked, awarded, question.marks],
   );
   res.status(201).json({ attempt: saved.rows[0] });
+}));
+
+// Check an answer with the AI marker: { answer } → { correct, attempt }.
+// The answer is marked against the mark scheme and saved as an attempt; the response carries the attempt
+// (mark and ticked points), which the student sees, and the teacher sees it on the progress pages.
+router.post('/questions/:id/check', wrap(async (req, res) => {
+  const { rows } = await query(
+    `SELECT ${MARKING_COLUMNS}
+       FROM questions q JOIN papers p ON p.number = q.paper
+       LEFT JOIN subjects sub ON sub.id = p.subject_id
+       LEFT JOIN exam_papers e ON e.code = q.exam_code
+      WHERE q.id = $1 AND q.paper = ANY($2)`,
+    [req.params.id, req.papers],
+  );
+  const question = rows[0];
+  if (!question) return res.status(404).json({ error: 'Question not found.' });
+  const answer = String(req.body.answer || '').slice(0, 20000);
+  if (!answer.trim()) return res.status(400).json({ error: 'Write your answer first.' });
+  if (!underLimit(req.userId)) return res.status(429).json({ error: 'You have checked a lot of answers in a short time. Wait a few minutes and try again.' });
+
+  let result;
+  try {
+    result = await markAnswer(question, answer);
+  } catch (err) {
+    if (err instanceof MarkingError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+  const saved = await query(
+    `INSERT INTO attempts (user_id, question_id, answer, ticked, awarded, marks, marked_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, answer, ticked, awarded, marks, marked_by, created_at`,
+    [req.userId, question.id, answer, result.ticked, result.mark, question.marks, result.marked_by],
+  );
+  res.status(201).json({ correct: result.correct, attempt: saved.rows[0] });
 }));
 
 router.put('/questions/:id/bookmark', wrap(async (req, res) => {
@@ -199,11 +233,11 @@ router.get('/bookmarks', wrap(async (req, res) => {
 }));
 
 router.get('/stats', wrap(async (req, res) => {
-  const [totals, weakest, recent, streak, activity] = await Promise.all([
+  const [totals, weakest, recent, streak, activity, weekly, mocks] = await Promise.all([
     stats.totals(req.userId, req.papers), stats.weakest(req.userId), stats.recent(req.userId),
-    stats.streak(req.userId), stats.activity(req.userId, 14),
+    stats.streak(req.userId), stats.activity(req.userId, 14), stats.weekly(req.userId, 8), stats.mocks(req.userId),
   ]);
-  res.json({ totals, weakest, recent, streak, activity });
+  res.json({ totals, weakest, recent, streak, activity, weekly, mocks });
 }));
 
 // Clear a student's attempts, for one paper or for everything.

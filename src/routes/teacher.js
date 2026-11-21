@@ -3,23 +3,26 @@ import { query } from '../db.js';
 import { isStaff, requireAuth, requireTeacher, wrap } from '../auth.js';
 import * as stats from '../stats.js';
 import { visiblePapers } from '../scope.js';
+import { STUDENT_SUBJECTS_SQL } from '../users.js';
 
 const router = Router();
 router.use(requireAuth, requireTeacher);
 
-// Teachers see the students who chose them; admins and super admins see every student.
+// Teachers see the students who chose them for at least one subject; admins and super admins see every student.
 export const scope = (req, alias = 's') => (isStaff(req.role)
   ? { sql: `${alias}.role = 'student'`, params: [] }
-  : { sql: `${alias}.role = 'student' AND ${alias}.teacher_id = $1`, params: [req.userId] });
+  : {
+    sql: `${alias}.role = 'student' AND EXISTS (SELECT 1 FROM student_subjects tss WHERE tss.student_id = ${alias}.id AND tss.teacher_id = $1)`,
+    params: [req.userId],
+  });
 
 async function findStudent(req, id) {
   const { sql, params } = scope(req);
   const { rows } = await query(
-    `SELECT s.id, s.username, s.name, s.email, s.status, s.class_name, s.created_at, s.approved_at, s.last_seen_at,
-            sub.name AS subject_name, t.name AS teacher_name
+    `SELECT s.id, s.username, s.name, s.email, s.status, s.grade, s.class_name, s.created_at, s.approved_at, s.last_seen_at,
+            coalesce(ss.subjects, '[]') AS subjects, ss.subject_name, ss.teacher_name
        FROM users s
-       LEFT JOIN subjects sub ON sub.id = s.subject_id
-       LEFT JOIN users t ON t.id = s.teacher_id
+       LEFT JOIN LATERAL (${STUDENT_SUBJECTS_SQL('s')}) ss ON true
       WHERE ${sql} AND s.id = $${params.length + 1}`,
     [...params, id],
   );
@@ -30,14 +33,13 @@ async function findStudent(req, id) {
 router.get('/students', wrap(async (req, res) => {
   const { sql, params } = scope(req);
   const { rows } = await query(
-    `SELECT s.id, s.username, s.name, s.email, s.status, s.class_name, s.created_at, s.last_seen_at,
-            sub.name AS subject_name, t.name AS teacher_name,
+    `SELECT s.id, s.username, s.name, s.email, s.status, s.grade, s.class_name, s.created_at, s.last_seen_at,
+            coalesce(ss.subjects, '[]') AS subjects, ss.subject_name, ss.teacher_name,
             coalesce(la.answered, 0) AS answered, coalesce(la.earned, 0) AS earned, coalesce(la.available, 0) AS available,
             coalesce(act.week, 0) AS week_attempts, act.last_attempt,
             coalesce(pp.papers, '[]') AS papers
        FROM users s
-       LEFT JOIN subjects sub ON sub.id = s.subject_id
-       LEFT JOIN users t ON t.id = s.teacher_id
+       LEFT JOIN LATERAL (${STUDENT_SUBJECTS_SQL('s')}) ss ON true
        LEFT JOIN LATERAL (
          SELECT count(*)::int AS answered, sum(awarded)::int AS earned, sum(marks)::int AS available
            FROM latest_attempts WHERE user_id = s.id
@@ -57,7 +59,8 @@ router.get('/students', wrap(async (req, res) => {
     params,
   );
   const papers = await query(
-    'SELECT number, label FROM papers WHERE number = ANY($1) ORDER BY number',
+    `SELECT p.number, p.label, s.name AS subject_name FROM papers p LEFT JOIN subjects s ON s.id = p.subject_id
+      WHERE p.number = ANY($1) ORDER BY p.number`,
     [await visiblePapers(req.userId, req.role)],
   );
   res.json({ students: rows, papers: papers.rows });
@@ -96,6 +99,36 @@ router.get('/overview', wrap(async (req, res) => {
     params,
   );
   res.json({ classes: classes.rows, topics: topics.rows });
+}));
+
+// The classes this teacher teaches: one row per class and subject (a teacher can teach 12A both 9618 and 9701).
+// Scores count only questions from that subject. Admins and super admins see every class.
+router.get('/classes', wrap(async (req, res) => {
+  const { rows } = await query(
+    `SELECT s.class_name, sub.id AS subject_id, sub.code AS subject_code, sub.name AS subject_name, sub.level,
+            count(*) FILTER (WHERE s.status = 'approved')::int AS students,
+            count(*) FILTER (WHERE s.status = 'pending')::int AS pending,
+            count(*) FILTER (WHERE s.status = 'approved' AND act.week)::int AS active_week,
+            coalesce(sum(la.answered), 0)::int AS answered,
+            coalesce(sum(la.earned), 0)::int AS earned, coalesce(sum(la.available), 0)::int AS available,
+            array_agg(DISTINCT s.grade) FILTER (WHERE s.grade IS NOT NULL) AS grades
+       FROM student_subjects ss
+       JOIN users s ON s.id = ss.student_id AND s.role = 'student' AND s.status <> 'rejected'
+       JOIN subjects sub ON sub.id = ss.subject_id
+       LEFT JOIN LATERAL (
+         SELECT count(*)::int AS answered, sum(l.awarded)::int AS earned, sum(l.marks)::int AS available
+           FROM latest_attempts l JOIN questions q ON q.id = l.question_id JOIN papers p ON p.number = q.paper
+          WHERE l.user_id = s.id AND p.subject_id = ss.subject_id
+       ) la ON s.status = 'approved'
+       LEFT JOIN LATERAL (
+         SELECT EXISTS (SELECT 1 FROM attempts a WHERE a.user_id = s.id AND a.created_at > now() - interval '7 days') AS week
+       ) act ON true
+      WHERE $1::boolean OR ss.teacher_id = $2
+      GROUP BY s.class_name, sub.id, sub.code, sub.name, sub.level
+      ORDER BY sub.level DESC, sub.name, s.class_name`,
+    [isStaff(req.role), req.userId],
+  );
+  res.json({ classes: rows });
 }));
 
 // One student in detail: progress by paper and chapter, weak topics, and their recent answers.

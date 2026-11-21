@@ -110,3 +110,36 @@ export async function streak(userId) {
   }
   return count;
 }
+
+// Marks per week for the last `weeks` weeks (oldest first): how many answers, and the share of marks earned,
+// so a student can see whether they are improving.
+export async function weekly(userId, weeks = 8) {
+  const { rows } = await query(
+    `SELECT to_char(w, 'YYYY-MM-DD') AS week, count(a.id)::int AS attempts,
+            coalesce(sum(a.awarded), 0)::int AS earned, coalesce(sum(a.marks), 0)::int AS available
+       FROM generate_series(date_trunc('week', now()) - ($2::int - 1) * interval '1 week', date_trunc('week', now()), interval '1 week') w
+       LEFT JOIN attempts a ON a.user_id = $1 AND date_trunc('week', a.created_at) = w
+      GROUP BY w ORDER BY w`,
+    [userId, weeks],
+  );
+  return rows;
+}
+
+// Mock exams whose results the teacher has released, newest first.
+export async function mocks(userId) {
+  const { rows } = await query(
+    `SELECT a.id, a.title, a.results_released_at, ast.submitted_at,
+            coalesce(sum(m.mark), 0)::int AS earned, sum(q.marks)::int AS marks
+       FROM assignment_students ast
+       JOIN assignments a ON a.id = ast.assignment_id AND a.kind = 'mock' AND a.results_released_at IS NOT NULL
+       JOIN assignment_questions aq ON aq.assignment_id = a.id
+       JOIN questions q ON q.id = aq.question_id
+       LEFT JOIN mock_answers m ON m.assignment_id = a.id AND m.student_id = ast.student_id AND m.question_id = q.id
+      WHERE ast.student_id = $1 AND ast.submitted_at IS NOT NULL
+      GROUP BY a.id, ast.submitted_at
+      ORDER BY a.results_released_at DESC
+      LIMIT 10`,
+    [userId],
+  );
+  return rows;
+}

@@ -1,5 +1,5 @@
 // Adds teachers and students from a CSV file (save it from Excel or Google Sheets as "CSV").
-// Each student is linked to their class, their subject and the teacher who teaches them.
+// Each student is linked to their grade, class, subjects and the teacher of each subject.
 //
 //   npm run import-users -- path/to/students.csv            check the file, change nothing
 //   npm run import-users -- path/to/students.csv --save     add / update the accounts
@@ -10,10 +10,13 @@
 //   username  login name; empty = made from the name, e.g. "Aziz Karimov" → aziz.karimov
 //   email     optional
 //   password  optional; empty = a random password is made for new accounts
+//   grade     students: 9, 10, 11 or 12; empty = taken from the start of the class, e.g. 10B → 10
+//             grades 9–10 take IGCSE subjects (codes starting with 0), grades 11–12 A Level (codes starting with 9)
 //   class     students: their class, e.g. 12A (required)
-//   subject   students: subject code 9618, 9701, 0478 or 0620 (required)
+//   subject   students: their subject codes, separated by ; e.g. 9618;9701 (required)
 //             teachers: the subjects they teach, separated by ; e.g. 9618;0478
-//   teacher   students: the teacher's login name or full name (required)
+//   teacher   students: the teacher's login name or full name (required); one teacher for every subject,
+//             or one per subject in the same order, e.g. ms.karimova;mr.aliyev
 //
 // Teachers are added first, so students in the same file can name them.
 // Someone already in the database (same login name) is updated; their password is kept unless the file gives one.
@@ -27,6 +30,9 @@ import 'dotenv/config';
 
 const USERNAME_RE = /^[a-z0-9._-]{3,30}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const LEVEL_NAMES = { igcse: 'IGCSE', alevel: 'A Level' };
+const levelForGrade = (g) => (g === 9 || g === 10 ? 'igcse' : g === 11 || g === 12 ? 'alevel' : null);
+const splitList = (v) => (v || '').split(/[;|/]/).map((x) => x.trim()).filter(Boolean);
 
 // Small CSV reader: commas or semicolons, quoted fields, "" inside quotes, Windows line endings.
 function parseCsv(text) {
@@ -89,7 +95,7 @@ async function main() {
   const errors = [];
   const out = [];
   try {
-    const subjects = (await client.query('SELECT id, code, name FROM subjects')).rows;
+    const subjects = (await client.query('SELECT id, code, name, level FROM subjects')).rows;
     const subjectByCode = (code) => subjects.find((s) => s.code === code.trim() || s.name.toLowerCase() === code.trim().toLowerCase());
     const existing = (await client.query('SELECT id, lower(username) AS username, lower(email) AS email, name, role FROM users')).rows;
     const usedNames = new Set(existing.map((u) => u.username));
@@ -132,10 +138,20 @@ async function main() {
         item.subjectIds = found.map((s) => s.id);
       } else {
         if (!r.class) { fail('class is empty'); continue; }
-        const subject = r.subject && subjectByCode(r.subject);
-        if (!subject) { fail(`unknown or empty subject "${r.subject || ''}" (use ${subjects.map((s) => s.code).join(', ')})`); continue; }
-        if (!r.teacher) { fail('teacher is empty'); continue; }
-        item.subjectId = subject.id;
+        const grade = Number(r.grade) || Number((r.class.match(/^(9|10|11|12)(?!\d)/) || [])[1]);
+        const level = levelForGrade(grade);
+        if (!level) { fail(`grade must be 9, 10, 11 or 12 (fill in the grade column, or start the class with it, e.g. 10B)`); continue; }
+        const codes = splitList(r.subject);
+        const found = codes.map(subjectByCode);
+        if (!codes.length || found.some((x) => !x)) { fail(`unknown or empty subject "${r.subject || ''}" (use ${subjects.map((x) => x.code).join(', ')})`); continue; }
+        const wrong = found.find((x) => x.level !== level);
+        if (wrong) { fail(`${wrong.code} is ${LEVEL_NAMES[wrong.level]}, but grade ${grade} students take ${LEVEL_NAMES[level]} subjects`); continue; }
+        if (new Set(found.map((x) => x.id)).size !== found.length) { fail('a subject is listed twice'); continue; }
+        const teachers = splitList(r.teacher);
+        if (!teachers.length) { fail('teacher is empty'); continue; }
+        if (teachers.length !== 1 && teachers.length !== codes.length) { fail(`give one teacher, or one teacher per subject (${codes.length})`); continue; }
+        item.grade = grade;
+        item.choices = found.map((x, i) => ({ subjectId: x.id, code: x.code, teacher: teachers[teachers.length === 1 ? 0 : i] }));
       }
       plan.push(item);
     }
@@ -148,17 +164,19 @@ async function main() {
     )).rows;
     const teacherKey = (s) => s.trim().toLowerCase();
     for (const item of plan.filter((p) => p.role === 'student')) {
-      const key = teacherKey(item.teacher);
-      const fromFile = plan.find((p) => p.role === 'teacher' && (p.username === key || p.name.toLowerCase() === key));
-      const fromDb = teachersInDb.filter((t) => t.username === key || t.name === key);
-      if (!fromFile && fromDb.length > 1) { errors.push(`Line ${item.line} (${item.name}): two teachers are called "${item.teacher}"; use the login name`); continue; }
-      const teaches = fromFile ? fromFile.subjectIds : fromDb[0]?.subjects;
-      if (!fromFile && !fromDb.length) { errors.push(`Line ${item.line} (${item.name}): no teacher "${item.teacher}" (add them as a teacher row, or check the spelling)`); continue; }
-      if (!teaches.includes(item.subjectId)) {
-        errors.push(`Line ${item.line} (${item.name}): ${item.teacher} does not teach ${subjects.find((s) => s.id === item.subjectId).code}`);
-        continue;
+      for (const choice of item.choices) {
+        const key = teacherKey(choice.teacher);
+        const fromFile = plan.find((p) => p.role === 'teacher' && (p.username === key || p.name.toLowerCase() === key));
+        const fromDb = teachersInDb.filter((t) => t.username === key || t.name === key);
+        if (!fromFile && fromDb.length > 1) { errors.push(`Line ${item.line} (${item.name}): two teachers are called "${choice.teacher}"; use the login name`); break; }
+        const teaches = fromFile ? fromFile.subjectIds : fromDb[0]?.subjects;
+        if (!fromFile && !fromDb.length) { errors.push(`Line ${item.line} (${item.name}): no teacher "${choice.teacher}" (add them as a teacher row, or check the spelling)`); break; }
+        if (!teaches.includes(choice.subjectId)) {
+          errors.push(`Line ${item.line} (${item.name}): ${choice.teacher} does not teach ${choice.code}`);
+          break;
+        }
+        choice.teacherRef = fromFile ? { username: fromFile.username } : { id: fromDb[0].id };
       }
-      item.teacherRef = fromFile ? { username: fromFile.username } : { id: fromDb[0].id };
     }
 
     const teachersCount = plan.filter((p) => p.role === 'teacher').length;
@@ -182,7 +200,7 @@ async function main() {
       for (const p of plan) {
         const what = p.role === 'teacher'
           ? `teacher, teaches ${p.subjectIds.map((id) => subjects.find((s) => s.id === id).code).join(', ') || 'nothing yet'}`
-          : `student, class ${p.class}, ${subjects.find((s) => s.id === p.subjectId).code}, teacher ${p.teacher}`;
+          : `student, grade ${p.grade}, class ${p.class}, ${p.choices.map((c) => `${c.code} with ${c.teacher}`).join(', ')}`;
         console.log(`  ${p.existing ? 'update' : 'add   '} ${p.username.padEnd(24)} ${p.name} · ${what}`);
       }
       console.log('\nEverything looks right. Nothing was saved yet: run again with --save to add them.');
@@ -214,10 +232,16 @@ async function main() {
       if (p.role === 'teacher') {
         await client.query('INSERT INTO teacher_subjects (teacher_id, subject_id) SELECT $1, unnest($2::int[]) ON CONFLICT DO NOTHING', [id, p.subjectIds]);
       } else {
-        const teacherId = p.teacherRef.id ?? idByUsername[p.teacherRef.username];
-        await client.query('UPDATE users SET class_name = $2, subject_id = $3, teacher_id = $4 WHERE id = $1', [id, p.class, p.subjectId, teacherId]);
+        const pairs = p.choices.map((c) => ({ subjectId: c.subjectId, teacherId: c.teacherRef.id ?? idByUsername[c.teacherRef.username] }));
+        await client.query('UPDATE users SET grade = $2, class_name = $3, subject_id = $4, teacher_id = $5 WHERE id = $1',
+          [id, p.grade, p.class, pairs[0].subjectId, pairs[0].teacherId]);
+        await client.query('DELETE FROM student_subjects WHERE student_id = $1', [id]);
+        for (const [i, pair] of pairs.entries()) {
+          await client.query('INSERT INTO student_subjects (student_id, subject_id, teacher_id, position) VALUES ($1, $2, $3, $4)',
+            [id, pair.subjectId, pair.teacherId, i]);
+        }
       }
-      out.push({ role: p.role, name: p.name, username: p.username, password: password || '(not changed: same as before)', class: p.class || '', subject: p.subject || '', teacher: p.teacher || '' });
+      out.push({ role: p.role, name: p.name, username: p.username, password: password || '(not changed: same as before)', grade: p.grade || '', class: p.class || '', subject: p.subject || '', teacher: p.teacher || '' });
     }
     await client.query('COMMIT');
 
@@ -225,7 +249,7 @@ async function main() {
     const base = path.join(path.dirname(file), path.basename(file, path.extname(file)));
     let target = `${base}-passwords.csv`;
     for (let n = 2; fs.existsSync(target); n += 1) target = `${base}-passwords-${n}.csv`;
-    const header2 = ['role', 'name', 'username', 'password', 'class', 'subject', 'teacher'];
+    const header2 = ['role', 'name', 'username', 'password', 'grade', 'class', 'subject', 'teacher'];
     fs.writeFileSync(target, `${[header2, ...out.map((o) => header2.map((h) => o[h]))].map((r) => r.map(csvCell).join(',')).join('\n')}\n`, { mode: 0o600 });
     console.log(`Saved: ${teachersCount} teachers and ${studentsCount} students.`);
     console.log(`Login names and passwords: ${target}`);

@@ -117,15 +117,6 @@ ALTER TABLE papers ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT '';
 ALTER TABLE questions ADD COLUMN IF NOT EXISTS figures JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE questions ADD COLUMN IF NOT EXISTS answer_figures JSONB NOT NULL DEFAULT '[]';
 
--- Students with their subject and teacher, for approving accounts in pgAdmin:
--- open the users table and change status to 'approved'.
-CREATE OR REPLACE VIEW student_accounts AS
-SELECT s.id, s.username, s.name, s.status, s.class_name, sub.name AS subject, t.name AS teacher, s.created_at
-FROM users s
-LEFT JOIN subjects sub ON sub.id = s.subject_id
-LEFT JOIN users t ON t.id = s.teacher_id
-WHERE s.role = 'student';
-
 -- Latest attempt per student per question, handy for browsing in pgAdmin.
 CREATE OR REPLACE VIEW latest_attempts AS
 SELECT DISTINCT ON (user_id, question_id) *
@@ -196,3 +187,80 @@ CREATE TABLE IF NOT EXISTS examiner_comments (
   comment   TEXT NOT NULL,
   PRIMARY KEY (exam_code, label)
 );
+
+-- Levels: Cambridge IGCSE syllabus codes start with 0 (0478, 0620), AS & A Level codes with 9 (9618, 9701, 9700).
+ALTER TABLE subjects ADD COLUMN IF NOT EXISTS level TEXT
+  GENERATED ALWAYS AS (CASE WHEN code LIKE '0%' THEN 'igcse' ELSE 'alevel' END) STORED;
+
+-- A student's school grade decides their level: grades 9–10 take IGCSE, grades 11–12 take A Level.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS grade INTEGER CHECK (grade BETWEEN 9 AND 12);
+-- Students from before grades existed: take the grade from the start of their class name (e.g. 9B → 9).
+UPDATE users SET grade = substring(class_name FROM '^(9|10|11|12)(?!\d)')::int
+ WHERE role = 'student' AND grade IS NULL AND class_name ~ '^(9|10|11|12)(?!\d)';
+
+-- A student can take several subjects, each with its own teacher.
+-- users.subject_id and users.teacher_id keep the first of them, for older screens and pgAdmin.
+CREATE TABLE IF NOT EXISTS student_subjects (
+  student_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  teacher_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  position   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (student_id, subject_id)
+);
+CREATE INDEX IF NOT EXISTS student_subjects_teacher_idx ON student_subjects (teacher_id);
+-- Students from before this table existed keep their one subject and teacher.
+INSERT INTO student_subjects (student_id, subject_id, teacher_id)
+SELECT id, subject_id, teacher_id FROM users
+ WHERE role = 'student' AND subject_id IS NOT NULL
+ON CONFLICT DO NOTHING;
+
+-- Answers marked by the AI marker are tagged so teachers can tell them from self-marked ones.
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS marked_by TEXT NOT NULL DEFAULT 'self'
+  CHECK (marked_by IN ('self', 'ai', 'auto'));
+
+-- Students with their subjects and teachers, for approving accounts in pgAdmin:
+-- open the users table and change status to 'approved'.
+DROP VIEW IF EXISTS student_accounts;
+CREATE VIEW student_accounts AS
+SELECT s.id, s.username, s.name, s.status, s.grade, s.class_name,
+       string_agg(sub.name, ', ' ORDER BY ss.position, sub.name) AS subject,
+       string_agg(DISTINCT t.name, ', ') AS teacher, s.created_at
+FROM users s
+LEFT JOIN student_subjects ss ON ss.student_id = s.id
+LEFT JOIN subjects sub ON sub.id = ss.subject_id
+LEFT JOIN users t ON t.id = ss.teacher_id
+WHERE s.role = 'student'
+GROUP BY s.id;
+
+-- Mock exams: an assignment of kind 'mock' is sat like the real exam. It is timed, shows no mark scheme and
+-- no marking while it runs, and the teacher marks it (the AI suggests a mark first) and then releases the results.
+ALTER TABLE assignments ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'practice';
+DO $$ BEGIN
+  ALTER TABLE assignments ADD CONSTRAINT assignments_kind_check CHECK (kind IN ('practice', 'mock'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE assignments ADD COLUMN IF NOT EXISTS time_limit_min INTEGER CHECK (time_limit_min BETWEEN 5 AND 300);
+ALTER TABLE assignments ADD COLUMN IF NOT EXISTS results_released_at TIMESTAMPTZ;
+-- When the student pressed Start (the clock runs from here) and the teacher's overall comment.
+ALTER TABLE assignment_students ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE assignment_students ADD COLUMN IF NOT EXISTS teacher_comment TEXT NOT NULL DEFAULT '';
+
+-- A student's answer to one mock-exam question, the AI's suggested mark, and the teacher's mark.
+-- On release, every marked answer is also written to attempts, so it counts in the student's progress.
+CREATE TABLE IF NOT EXISTS mock_answers (
+  assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+  student_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  question_id   TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+  answer        TEXT NOT NULL DEFAULT '',
+  saved_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ai_mark       INTEGER,
+  ai_ticked     INTEGER[],
+  ai_error      TEXT,
+  mark          INTEGER,
+  ticked        INTEGER[] NOT NULL DEFAULT '{}',
+  comment       TEXT NOT NULL DEFAULT '',
+  marked_at     TIMESTAMPTZ,
+  PRIMARY KEY (assignment_id, student_id, question_id)
+);
+-- Mock-exam marks released by a teacher are saved as attempts marked by 'teacher'.
+ALTER TABLE attempts DROP CONSTRAINT IF EXISTS attempts_marked_by_check;
+ALTER TABLE attempts ADD CONSTRAINT attempts_marked_by_check CHECK (marked_by IN ('self', 'ai', 'auto', 'teacher'));

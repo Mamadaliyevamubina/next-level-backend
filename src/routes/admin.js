@@ -2,7 +2,9 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { pool, query } from '../db.js';
 import { ROLES, requireAdmin, requireAuth, requireSuperAdmin, wrap } from '../auth.js';
-import { EMAIL_RE, USERNAME_RE, loadProfile, validTeacherChoice } from '../users.js';
+import {
+  EMAIL_RE, STUDENT_SUBJECTS_SQL, USERNAME_RE, checkStudentChoices, choicesFromBody, currentPairs, loadProfile, setStudentSubjects,
+} from '../users.js';
 
 // Account management for admins and super admins.
 //
@@ -97,16 +99,15 @@ router.get('/users', wrap(async (req, res) => {
     add('(u.name ILIKE ? OR u.username ILIKE ? OR u.email ILIKE ? OR u.class_name ILIKE ?)', `%${String(req.query.search).trim()}%`);
   }
   const { rows } = await query(
-    `SELECT u.id, u.username, u.name, u.email, u.role, u.status, u.class_name, u.subject_id, u.teacher_id,
-            u.created_at, u.approved_at, u.last_seen_at, s.name AS subject_name, t.name AS teacher_name,
-            cb.name AS created_by_name,
+    `SELECT u.id, u.username, u.name, u.email, u.role, u.status, u.grade, u.class_name, u.subject_id, u.teacher_id,
+            u.created_at, u.approved_at, u.last_seen_at, coalesce(ss.subjects, '[]') AS subjects,
+            ss.subject_name, ss.teacher_name, cb.name AS created_by_name,
             coalesce((SELECT json_agg(json_build_object('id', ts.subject_id, 'name', ss.name) ORDER BY ss.name)
                         FROM teacher_subjects ts JOIN subjects ss ON ss.id = ts.subject_id
                        WHERE ts.teacher_id = u.id), '[]') AS teaches,
-            (SELECT count(*)::int FROM users st WHERE st.teacher_id = u.id AND st.role = 'student') AS student_count
+            (SELECT count(DISTINCT st.student_id)::int FROM student_subjects st WHERE st.teacher_id = u.id) AS student_count
        FROM users u
-       LEFT JOIN subjects s ON s.id = u.subject_id
-       LEFT JOIN users t ON t.id = u.teacher_id
+       LEFT JOIN LATERAL (${STUDENT_SUBJECTS_SQL('u')}) ss ON true
        LEFT JOIN users cb ON cb.id = u.created_by
       WHERE ${where.join(' AND ')}
       ORDER BY array_position($${params.length + 1}::text[], u.role) DESC, u.name`,
@@ -120,7 +121,8 @@ router.get('/users', wrap(async (req, res) => {
 }));
 
 // Create an account.
-// { role, name, username, email?, password, subjects?: [...] (teachers), subject_id, teacher_id, class_name (students) }
+// { role, name, username, email?, password, subjects?: [...] (teachers: ids or codes; students: [{ subject_id, teacher_id }]),
+//   grade, class_name (students) }
 router.post('/users', wrap(async (req, res) => {
   const role = String(req.body.role || '');
   if (!ROLES.includes(role)) return res.status(400).json({ error: `Role must be one of: ${ROLES.join(', ')}.` });
@@ -138,16 +140,12 @@ router.post('/users', wrap(async (req, res) => {
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
 
   let className = '';
-  let subjectId = null;
-  let teacherId = null;
+  let choices = null;
   if (role === 'student') {
     className = String(req.body.class_name || '').trim();
-    subjectId = Number(req.body.subject_id);
-    teacherId = Number(req.body.teacher_id);
     if (!className) return res.status(400).json({ error: 'Enter the student\'s class.' });
-    if (!(await validTeacherChoice(subjectId, teacherId))) {
-      return res.status(400).json({ error: 'Choose a subject and a teacher who teaches it.' });
-    }
+    choices = await checkStudentChoices(req.body.grade, choicesFromBody(req.body));
+    if (choices.error) return res.status(400).json({ error: choices.error });
   }
   const subjects = role === 'teacher' ? await subjectIds(req.body.subjects) : { ids: [] };
   if (subjects.error) return res.status(400).json({ error: subjects.error });
@@ -161,17 +159,18 @@ router.post('/users', wrap(async (req, res) => {
   const hash = await bcrypt.hash(password, 10);
   const id = await inTransaction(async (client) => {
     const { rows } = await client.query(
-      `INSERT INTO users (name, username, email, password_hash, role, status, approved_at, class_name, subject_id, teacher_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, 'approved', now(), $6, $7, $8, $9) RETURNING id`,
-      [name, username, email, hash, role, className, subjectId, teacherId, req.userId],
+      `INSERT INTO users (name, username, email, password_hash, role, status, approved_at, grade, class_name, created_by)
+       VALUES ($1, $2, $3, $4, $5, 'approved', now(), $6, $7, $8) RETURNING id`,
+      [name, username, email, hash, role, choices?.grade ?? null, className, req.userId],
     );
     if (role === 'teacher') await setTeacherSubjects(client, rows[0].id, subjects.ids);
+    if (choices) await setStudentSubjects(client, rows[0].id, choices.pairs);
     return rows[0].id;
   });
   res.status(201).json({ user: await loadProfile(id) });
 }));
 
-// Edit an account: { name?, email?, status?, class_name?, subject_id?, teacher_id? (students), subjects? (teachers) }
+// Edit an account: { name?, email?, status?, grade?, class_name?, subjects? (students: [{ subject_id, teacher_id }]; teachers: ids) }
 router.patch('/users/:id', wrap(async (req, res) => {
   const target = await loadTarget(req, res);
   if (!target) return;
@@ -188,17 +187,16 @@ router.patch('/users/:id', wrap(async (req, res) => {
     if (clash.rowCount) return res.status(409).json({ error: 'Another account already uses that email.' });
   }
 
-  let { class_name: className, subject_id: subjectId, teacher_id: teacherId } = current;
+  let { class_name: className, grade } = current;
+  let pairs = null;
   if (target.role === 'student') {
     if (req.body.class_name !== undefined) className = String(req.body.class_name).trim();
-    const nextSubject = req.body.subject_id === undefined ? subjectId : Number(req.body.subject_id);
-    const nextTeacher = req.body.teacher_id === undefined ? teacherId : Number(req.body.teacher_id);
-    if (nextSubject !== subjectId || nextTeacher !== teacherId) {
-      if (!(await validTeacherChoice(nextSubject, nextTeacher))) {
-        return res.status(400).json({ error: 'Choose a teacher who teaches that subject.' });
-      }
-      subjectId = nextSubject;
-      teacherId = nextTeacher;
+    const wanted = choicesFromBody(req.body);
+    if (wanted !== undefined || req.body.grade !== undefined) {
+      const choices = await checkStudentChoices(req.body.grade ?? grade, wanted ?? currentPairs(current));
+      if (choices.error) return res.status(400).json({ error: choices.error });
+      grade = choices.grade;
+      pairs = choices.pairs;
     }
   }
   const subjects = target.role === 'teacher' && req.body.subjects !== undefined ? await subjectIds(req.body.subjects) : null;
@@ -206,12 +204,13 @@ router.patch('/users/:id', wrap(async (req, res) => {
 
   await inTransaction(async (client) => {
     await client.query(
-      `UPDATE users SET name = $2, email = $3, status = $4, class_name = $5, subject_id = $6, teacher_id = $7,
+      `UPDATE users SET name = $2, email = $3, status = $4, class_name = $5, grade = $6,
               approved_at = CASE WHEN $4 = 'approved' THEN coalesce(approved_at, now()) ELSE NULL END
         WHERE id = $1`,
-      [target.id, name, email, status, className, subjectId, teacherId],
+      [target.id, name, email, status, className, grade],
     );
     if (subjects) await setTeacherSubjects(client, target.id, subjects.ids);
+    if (pairs) await setStudentSubjects(client, target.id, pairs);
   });
   res.json({ user: await loadProfile(target.id) });
 }));

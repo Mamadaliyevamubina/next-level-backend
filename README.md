@@ -2,7 +2,9 @@
 
 Express + PostgreSQL API for the Dombit International School past-paper practice site (Cambridge IGCSE Computer Science 0478 and Chemistry 0620, and AS & A Level Computer Science 9618 and Chemistry 9701). The React frontend and the static pages live in the [Next-Level](https://github.com/Mamadaliyevamubina/Next-Level) repository.
 
-Students sign up with a login name, choose their subject, teacher and class, and wait until their teacher approves them. Every account, answer, mark and bookmark is stored in a PostgreSQL database that you can open in pgAdmin.
+Students sign up with a login name, choose their grade, class and one or more subjects (with the teacher for each), and wait until a teacher approves them. Grades 9–10 can only choose IGCSE subjects (syllabus codes starting with 0) and grades 11–12 only AS & A Level subjects (codes starting with 9).
+
+**AI marking:** on every question a student can press **Check my answer**. Claude (`claude-opus-5-5`) marks the answer against the official mark scheme and the student is told only whether it is correct (full marks), then sees the mark scheme. The mark is saved for the teacher's progress pages (`attempts.marked_by = 'ai'`). One-letter multiple-choice answers are marked without AI (`marked_by = 'auto'`). Set `ANTHROPIC_API_KEY` in `.env` to turn it on, and `FIGURES_URL` or `FIGURES_DIR` so the marker can see the question images; without a key students only see **Mark it myself**. Each student can check 40 answers per 10 minutes. Every account, answer, mark and bookmark is stored in a PostgreSQL database that you can open in pgAdmin.
 
 ```
 src/            Express API (routes in src/routes/)

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { pool, query } from '../db.js';
 import { requireAuth, signToken, wrap } from '../auth.js';
-import { EMAIL_RE, USERNAME_RE, loadProfile, validTeacherChoice } from '../users.js';
+import { EMAIL_RE, GRADES, USERNAME_RE, checkStudentChoices, choicesFromBody, inTransaction, loadProfile, setStudentSubjects } from '../users.js';
 
 const router = Router();
 
@@ -64,27 +64,26 @@ router.post('/setup', wrap(async (req, res) => {
   res.status(201).json({ token: signToken({ id }), user: await loadProfile(id) });
 }));
 
-// Subjects and teachers for the sign-up form.
+// Grades, subjects (with their level: igcse or alevel) and teachers for the sign-up form.
 router.get('/options', wrap(async (req, res) => {
-  const subjects = await query('SELECT id, code, name FROM subjects ORDER BY name');
+  const subjects = await query('SELECT id, code, name, level FROM subjects ORDER BY name');
   const teachers = await query(
     `SELECT t.id, t.name, array_agg(ts.subject_id ORDER BY ts.subject_id) AS subject_ids
        FROM users t JOIN teacher_subjects ts ON ts.teacher_id = t.id
       WHERE t.role IN ('teacher', 'admin', 'super_admin') AND t.status = 'approved'
       GROUP BY t.id, t.name ORDER BY t.name`,
   );
-  res.json({ subjects: subjects.rows, teachers: teachers.rows });
+  res.json({ grades: GRADES, levels: { 9: 'igcse', 10: 'igcse', 11: 'alevel', 12: 'alevel' }, subjects: subjects.rows, teachers: teachers.rows });
 }));
 
-// Student sign-up. The account starts as "pending" until the teacher approves it.
+// Student sign-up. The account starts as "pending" until a teacher approves it.
+// { name, username, email?, password, grade, class_name, subjects: [{ subject_id, teacher_id }, ...] }
 router.post('/register', wrap(async (req, res) => {
   const name = String(req.body.name || '').trim();
   const username = String(req.body.username || '').trim().toLowerCase();
   const email = String(req.body.email || '').trim().toLowerCase() || null;
   const password = String(req.body.password || '');
   const className = String(req.body.class_name || '').trim();
-  const subjectId = Number(req.body.subject_id);
-  const teacherId = Number(req.body.teacher_id);
 
   if (!name) return res.status(400).json({ error: 'Enter your full name.' });
   if (!USERNAME_RE.test(username)) {
@@ -93,9 +92,8 @@ router.post('/register', wrap(async (req, res) => {
   if (email && !EMAIL_RE.test(email)) return res.status(400).json({ error: 'Enter a valid email address, or leave it empty.' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   if (!className) return res.status(400).json({ error: 'Enter your class.' });
-  if (!(await validTeacherChoice(subjectId, teacherId))) {
-    return res.status(400).json({ error: 'Choose your subject and then your teacher for that subject.' });
-  }
+  const choices = await checkStudentChoices(req.body.grade, choicesFromBody(req.body));
+  if (choices.error) return res.status(400).json({ error: choices.error });
 
   const taken = await query(
     'SELECT lower(username) = $1 AS same_username FROM users WHERE lower(username) = $1 OR ($2::text IS NOT NULL AND lower(email) = $2)',
@@ -106,12 +104,16 @@ router.post('/register', wrap(async (req, res) => {
   }
 
   const hash = await bcrypt.hash(password, 10);
-  const { rows } = await query(
-    `INSERT INTO users (name, username, email, password_hash, role, status, class_name, subject_id, teacher_id)
-     VALUES ($1, $2, $3, $4, 'student', 'pending', $5, $6, $7) RETURNING id`,
-    [name, username, email, hash, className, subjectId, teacherId],
-  );
-  res.status(201).json({ token: signToken(rows[0]), user: await loadProfile(rows[0].id) });
+  const id = await inTransaction(pool, async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO users (name, username, email, password_hash, role, status, grade, class_name)
+       VALUES ($1, $2, $3, $4, 'student', 'pending', $5, $6) RETURNING id`,
+      [name, username, email, hash, choices.grade, className],
+    );
+    await setStudentSubjects(client, rows[0].id, choices.pairs);
+    return rows[0].id;
+  });
+  res.status(201).json({ token: signToken({ id }), user: await loadProfile(id) });
 }));
 
 // Log in with login name (or email) and password.

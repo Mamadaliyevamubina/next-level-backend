@@ -7,6 +7,7 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "db:setup": "node scripts/setup-db.js",
+    "db:migrate": "node scripts/migrate.js",
     "create-user": "node scripts/create-user.js",
     "import-users": "node scripts/import-users.js"
   },
@@ -14,6 +15,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.12.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^18.0.9",

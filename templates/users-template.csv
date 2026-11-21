@@ -1,4 +1,4 @@
-role,name,username,email,password,class,subject,teacher
-teacher,Example Teacher,example.teacher,,,,9618;0478,
-student,Example Student One,,,,12A,9618,example.teacher
-student,Example Student Two,,,,10B,0478,Example Teacher
+role,name,username,email,password,grade,class,subject,teacher
+teacher,Example Teacher,example.teacher,,,,,9618;0478;9701,
+student,Example Student One,,,,12,12A,9618;9701,example.teacher
+student,Example Student Two,,,,10,10B,0478,Example Teacher
