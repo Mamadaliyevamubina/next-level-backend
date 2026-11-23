@@ -168,4 +168,47 @@ router.post('/students/:id/status', wrap(async (req, res) => {
   res.json({ id: student.id, status });
 }));
 
+// The AI's feedback on students' answers, newest first: what each answer got right and wrong, which the
+// students themselves do not see. ?unseen=1 lists only feedback the teacher has not marked as read.
+router.get('/feedback', wrap(async (req, res) => {
+  const { sql, params } = scope(req);
+  const unseen = req.query.unseen === '1';
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 60));
+  const { rows } = await query(
+    `SELECT a.id, a.answer, a.awarded, a.marks, a.ai_feedback, a.created_at, a.feedback_seen_at, a.assignment_id,
+            q.id AS question_id, q.label, q.subtopic, p.label AS paper_label, e.label AS exam_label,
+            s.id AS student_id, s.name AS student_name, s.class_name
+       FROM attempts a
+       JOIN users s ON s.id = a.user_id
+       JOIN questions q ON q.id = a.question_id
+       JOIN papers p ON p.number = q.paper
+       LEFT JOIN exam_papers e ON e.code = q.exam_code
+      WHERE a.ai_feedback IS NOT NULL AND ${sql} ${unseen ? 'AND a.feedback_seen_at IS NULL' : ''}
+      ORDER BY a.created_at DESC
+      LIMIT ${limit}`,
+    params,
+  );
+  const count = await query(
+    `SELECT count(*)::int AS n FROM attempts a JOIN users s ON s.id = a.user_id
+      WHERE a.ai_feedback IS NOT NULL AND a.feedback_seen_at IS NULL AND ${sql}`,
+    params,
+  );
+  res.json({ feedback: rows, unseen: count.rows[0].n });
+}));
+
+// Mark feedback as read: { ids: [...] }, or { all: true } for everything the teacher can see.
+router.post('/feedback/seen', wrap(async (req, res) => {
+  const { sql, params } = scope(req);
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger).slice(0, 500) : [];
+  if (!req.body.all && !ids.length) return res.status(400).json({ error: 'Nothing to mark as read.' });
+  const { rowCount } = await query(
+    `UPDATE attempts a SET feedback_seen_at = now()
+       FROM users s
+      WHERE s.id = a.user_id AND a.ai_feedback IS NOT NULL AND a.feedback_seen_at IS NULL AND ${sql}
+        ${req.body.all ? '' : `AND a.id = ANY($${params.length + 1})`}`,
+    req.body.all ? params : [...params, ids],
+  );
+  res.json({ marked: rowCount });
+}));
+
 export default router;

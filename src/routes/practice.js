@@ -17,6 +17,9 @@ router.use(wrap(async (req, res, next) => {
 
 const ORDER = 'q.chapter, q.subtopic, q.exam_code, q.id';
 
+// Students do not see mark schemes while the AI marks their answers.
+const schemeHidden = (req) => req.role === 'student' && aiEnabled();
+
 const paperNumber = (req, value) => {
   const n = Number(value);
   return req.papers.includes(n) ? n : null;
@@ -138,17 +141,28 @@ router.get('/questions/:id', wrap(async (req, res) => {
      ) t WHERE id = $1`,
     [question.id, question.paper],
   );
+  // Which points an AI-marked answer made is for the teacher only (with the mark scheme it would give the answer away).
   const attempts = await query(
-    `SELECT id, answer, ticked, awarded, marks, marked_by, created_at FROM attempts
+    `SELECT id, answer, CASE WHEN marked_by = 'self' THEN ticked ELSE '{}' END AS ticked,
+            awarded, marks, marked_by, ai_hint, created_at FROM attempts
       WHERE user_id = $1 AND question_id = $2 ORDER BY created_at DESC, id DESC`,
     [req.userId, question.id],
   );
+  // With AI marking on, students never see the mark scheme, the model answer or the examiner's comments:
+  // the AI marks the answer, the student gets a mark and a hint, and the teacher gets the full feedback.
+  if (schemeHidden(req)) {
+    Object.assign(question, { criteria: [], rejects: [], final_answer: '', answer_figures: [], ms_url: null, max_note: '', scheme_hidden: true });
+    return res.json({ question, ...nav.rows[0], attempts: attempts.rows, examiner: null, ai_marking: true });
+  }
   const examiner = await examinerReport(question.exam_code, question.label);
   res.json({ question, ...nav.rows[0], attempts: attempts.rows, examiner, ai_marking: aiEnabled() });
 }));
 
 // Save a self-marked attempt. The mark is checked against the question's maximum.
+// Students cannot mark themselves while AI marking is on (they do not see the mark scheme, and a self-given
+// mark would count in the competition).
 router.post('/questions/:id/attempts', wrap(async (req, res) => {
+  if (schemeHidden(req)) return res.status(403).json({ error: 'Use "Check my answer": the AI marks it and your teacher sees the feedback.' });
   const { rows } = await query('SELECT marks, criteria FROM questions WHERE id = $1 AND paper = ANY($2)', [req.params.id, req.papers]);
   const question = rows[0];
   if (!question) return res.status(404).json({ error: 'Question not found.' });
@@ -169,8 +183,8 @@ router.post('/questions/:id/attempts', wrap(async (req, res) => {
 }));
 
 // Check an answer with the AI marker: { answer } → { correct, attempt }.
-// The answer is marked against the mark scheme and saved as an attempt; the response carries the attempt
-// (mark and ticked points), which the student sees, and the teacher sees it on the progress pages.
+// The answer is marked against the mark scheme and saved as an attempt with the AI's feedback for the teacher.
+// The student gets the mark and a hint that does not give the answer away.
 router.post('/questions/:id/check', wrap(async (req, res) => {
   const { rows } = await query(
     `SELECT ${MARKING_COLUMNS}
@@ -193,10 +207,12 @@ router.post('/questions/:id/check', wrap(async (req, res) => {
     if (err instanceof MarkingError) return res.status(err.status).json({ error: err.message });
     throw err;
   }
+  // The teacher's feedback is saved with the attempt; the student gets the mark and the hint only,
+  // not the mark-scheme points they missed, so the answer is not given away.
   const saved = await query(
-    `INSERT INTO attempts (user_id, question_id, answer, ticked, awarded, marks, marked_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, answer, ticked, awarded, marks, marked_by, created_at`,
-    [req.userId, question.id, answer, result.ticked, result.mark, question.marks, result.marked_by],
+    `INSERT INTO attempts (user_id, question_id, answer, ticked, awarded, marks, marked_by, ai_feedback, ai_hint)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, answer, awarded, marks, marked_by, ai_hint, created_at`,
+    [req.userId, question.id, answer, result.ticked, result.mark, question.marks, result.marked_by, result.feedback, result.hint],
   );
   res.status(201).json({ correct: result.correct, attempt: saved.rows[0] });
 }));

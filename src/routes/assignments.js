@@ -71,7 +71,8 @@ router.get('/:id', wrap(async (req, res) => {
   const { rows } = await query(
     `SELECT q.*, p.label AS paper_label, c.name AS chapter_name, e.label AS exam_label, aq.position,
             CASE WHEN l.id IS NULL THEN NULL ELSE json_build_object(
-              'id', l.id, 'answer', l.answer, 'ticked', l.ticked, 'awarded', l.awarded, 'marks', l.marks, 'marked_by', l.marked_by,
+              'id', l.id, 'answer', l.answer, 'ticked', CASE WHEN l.marked_by = 'self' THEN l.ticked ELSE '{}' END,
+              'awarded', l.awarded, 'marks', l.marks, 'marked_by', l.marked_by, 'ai_hint', l.ai_hint,
               'created_at', l.created_at
             ) END AS my_attempt
        FROM assignment_questions aq
@@ -84,6 +85,10 @@ router.get('/:id', wrap(async (req, res) => {
       ORDER BY aq.position`,
     [assignment.id, req.userId],
   );
+  // With AI marking on, students do not see mark schemes (see practice.js).
+  if (aiEnabled()) {
+    for (const q of rows) Object.assign(q, { criteria: [], rejects: [], final_answer: '', answer_figures: [], max_note: '', scheme_hidden: true });
+  }
   res.json({ assignment, questions: rows, ai_marking: aiEnabled() });
 }));
 
@@ -92,6 +97,7 @@ router.post('/:id/questions/:questionId/attempts', wrap(async (req, res) => {
   const assignment = await findMine(req, Number(req.params.id));
   if (!assignment) return res.status(404).json({ error: 'Assignment not found.' });
   if (assignment.kind === 'mock') return mockOnly(res);
+  if (aiEnabled()) return res.status(403).json({ error: 'Use "Check my answer": the AI marks it and your teacher sees the feedback.' });
   if (assignment.submitted_at) {
     return res.status(409).json({ error: 'You have already handed this assignment in. Ask your teacher to reopen it.' });
   }
@@ -119,7 +125,7 @@ router.post('/:id/questions/:questionId/attempts', wrap(async (req, res) => {
 }));
 
 // Check an answer to one question of the assignment with the AI marker: { answer } → { correct, attempt }.
-// Saved like a self-marked answer; the student sees the mark and the points made.
+// Saved with the AI's feedback for the teacher; the student sees the mark and a hint only.
 router.post('/:id/questions/:questionId/check', wrap(async (req, res) => {
   const assignment = await findMine(req, Number(req.params.id));
   if (!assignment) return res.status(404).json({ error: 'Assignment not found.' });
@@ -151,9 +157,9 @@ router.post('/:id/questions/:questionId/check', wrap(async (req, res) => {
     throw err;
   }
   const saved = await query(
-    `INSERT INTO attempts (user_id, question_id, answer, ticked, awarded, marks, assignment_id, marked_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, answer, ticked, awarded, marks, marked_by, created_at`,
-    [req.userId, question.id, answer, result.ticked, result.mark, question.marks, assignment.id, result.marked_by],
+    `INSERT INTO attempts (user_id, question_id, answer, ticked, awarded, marks, assignment_id, marked_by, ai_feedback, ai_hint)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, answer, awarded, marks, marked_by, ai_hint, created_at`,
+    [req.userId, question.id, answer, result.ticked, result.mark, question.marks, assignment.id, result.marked_by, result.feedback, result.hint],
   );
   res.status(201).json({ correct: result.correct, attempt: saved.rows[0] });
 }));

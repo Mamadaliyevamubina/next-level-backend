@@ -264,3 +264,21 @@ CREATE TABLE IF NOT EXISTS mock_answers (
 -- Mock-exam marks released by a teacher are saved as attempts marked by 'teacher'.
 ALTER TABLE attempts DROP CONSTRAINT IF EXISTS attempts_marked_by_check;
 ALTER TABLE attempts ADD CONSTRAINT attempts_marked_by_check CHECK (marked_by IN ('self', 'ai', 'auto', 'teacher'));
+
+-- AI feedback: every answer the AI marks gets a note for the teacher (what was right and wrong, with the mark
+-- scheme in mind) and a hint for the student that never gives the answer away.
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS ai_feedback TEXT;
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS ai_hint TEXT;
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS feedback_seen_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS attempts_ai_feedback_idx ON attempts (created_at DESC) WHERE ai_feedback IS NOT NULL;
+ALTER TABLE mock_answers ADD COLUMN IF NOT EXISTS ai_feedback TEXT;
+-- The views above were made before these columns existed; make them again so they include them.
+CREATE OR REPLACE VIEW latest_attempts AS
+SELECT DISTINCT ON (user_id, question_id) *
+FROM attempts
+ORDER BY user_id, question_id, created_at DESC, id DESC;
+CREATE OR REPLACE VIEW latest_assignment_attempts AS
+SELECT DISTINCT ON (assignment_id, user_id, question_id) *
+FROM attempts
+WHERE assignment_id IS NOT NULL
+ORDER BY assignment_id, user_id, question_id, created_at DESC, id DESC;

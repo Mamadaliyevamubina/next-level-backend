@@ -64,6 +64,7 @@ export async function suggestMarks(assignmentId, studentId) {
     for (const row of rows) {
       let mark = 0;
       let ticked = [];
+      let feedback = null;
       let error = null;
       if (row.answer.trim()) {
         if (!aiEnabled()) {
@@ -73,6 +74,7 @@ export async function suggestMarks(assignmentId, studentId) {
             const result = await markAnswer(row, row.answer);
             mark = result.mark;
             ticked = result.ticked;
+            feedback = result.feedback;
           } catch (err) {
             error = err instanceof MarkingError ? err.message : 'The AI marker could not mark this answer.';
             if (!(err instanceof MarkingError)) console.error('Mock exam AI marking failed:', err);
@@ -80,9 +82,9 @@ export async function suggestMarks(assignmentId, studentId) {
         }
       }
       await query(
-        `UPDATE mock_answers SET ai_mark = $4, ai_ticked = $5, ai_error = $6
+        `UPDATE mock_answers SET ai_mark = $4, ai_ticked = $5, ai_error = $6, ai_feedback = $7
           WHERE assignment_id = $1 AND student_id = $2 AND question_id = $3`,
-        [assignmentId, studentId, row.id, error ? null : mark, error ? null : ticked, error],
+        [assignmentId, studentId, row.id, error ? null : mark, error ? null : ticked, error, error ? null : feedback],
       );
     }
   } finally {

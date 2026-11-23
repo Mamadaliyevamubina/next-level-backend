@@ -279,7 +279,7 @@ router.get('/:id/students/:studentId/mock', wrap(async (req, res) => {
   if (student.submitted_at) await fillBlankAnswers(assignment.id, student.id);
   const { rows } = await query(
     `SELECT ${MARKING_COLUMNS}, p.label AS paper_label, aq.position,
-            m.answer, m.saved_at, m.ai_mark, m.ai_ticked, m.ai_error, m.mark, m.ticked, m.comment, m.marked_at
+            m.answer, m.saved_at, m.ai_mark, m.ai_ticked, m.ai_error, m.ai_feedback, m.mark, m.ticked, m.comment, m.marked_at
        FROM assignment_questions aq
        JOIN questions q ON q.id = aq.question_id
        JOIN papers p ON p.number = q.paper

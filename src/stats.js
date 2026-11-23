@@ -65,7 +65,7 @@ export async function weakest(userId, limit = 6) {
 export async function recent(userId, limit = 8, withAnswers = false) {
   const { rows } = await query(
     `SELECT a.id, a.question_id, a.awarded, a.marks, a.created_at, q.paper, p.label AS paper_label, q.label, q.subtopic,
-            e.label AS exam_label ${withAnswers ? ', a.answer' : ''}
+            e.label AS exam_label ${withAnswers ? ', a.answer, a.marked_by, a.ai_feedback, a.ai_hint' : ''}
        FROM attempts a
        JOIN questions q ON q.id = a.question_id
        JOIN papers p ON p.number = q.paper
