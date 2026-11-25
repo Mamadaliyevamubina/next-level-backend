@@ -72,7 +72,7 @@ if (fs.existsSync(clientIndex)) {
   app.use(express.static(clientDist, { index: false, maxAge: '1h' }));
   app.get(/^\/(?!api(\/|$)).*/, (req, res, next) => {
     // Missing images and files are a 404, not the app.
-    if (path.extname(req.path)) return next();
+    if (path.extname(req.path) && !req.path.endsWith('.html')) return next();
     res.sendFile(clientIndex);
   });
   console.log(`Serving the website from ${clientDist}`);
