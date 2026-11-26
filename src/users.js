@@ -81,14 +81,16 @@ export async function loadProfile(id) {
 }
 
 // Checks a student's grade and subject choices: [{ subject_id, teacher_id }, ...].
-// Every subject must be at the level of the grade, and every teacher must teach their subject.
+// Every subject must be at the level of the grade, and every teacher must teach their subject
+// (a subject nobody teaches yet is taken without a teacher).
 // Returns { grade, pairs } or { error }.
 export async function checkStudentChoices(gradeValue, list) {
   const grade = Number(gradeValue);
   const level = levelForGrade(grade);
   if (!level) return { error: 'Choose your grade (9, 10, 11 or 12).' };
   const items = Array.isArray(list) ? list : [];
-  const pairs = items.map((x) => ({ subject_id: Number(x?.subject_id), teacher_id: Number(x?.teacher_id) }));
+  // teacher_id is null for a subject that has no teacher yet: an admin approves the student and assigns one later.
+  const pairs = items.map((x) => ({ subject_id: Number(x?.subject_id), teacher_id: Number(x?.teacher_id) || null }));
   if (!pairs.length) return { error: 'Choose at least one subject.' };
   if (pairs.length > 10) return { error: 'Choose at most 10 subjects.' };
   if (new Set(pairs.map((p) => p.subject_id)).size !== pairs.length) return { error: 'Each subject can only be chosen once.' };
@@ -107,7 +109,9 @@ export async function checkStudentChoices(gradeValue, list) {
     if (subject.level !== level) {
       return { error: `${subject.name} is ${LEVEL_NAMES[subject.level]}. Grade ${grade} students take ${LEVEL_NAMES[level]} subjects.` };
     }
-    if (!subject.teachers.includes(p.teacher_id)) return { error: `Choose your teacher for ${subject.name}.` };
+    if (subject.teachers.length ? !subject.teachers.includes(p.teacher_id) : p.teacher_id !== null) {
+      return { error: `Choose your teacher for ${subject.name}.` };
+    }
   }
   return { grade, pairs };
 }
